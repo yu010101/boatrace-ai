@@ -151,7 +151,8 @@ def test_results_fetch_error(runner: CliRunner) -> None:
 
 
 def test_results_check_empty(runner: CliRunner) -> None:
-    with patch("boatrace_ai.cli.check_accuracy", return_value=[]):
+    with patch("boatrace_ai.cli.check_accuracy", return_value=[]), \
+         patch("boatrace_ai.cli.check_virtual_bets", return_value=[]):
         result = runner.invoke(cli, ["results", "check"])
         assert result.exit_code == 0
         assert "比較可能なレースがありません" in result.output
@@ -171,7 +172,8 @@ def test_results_check_with_data(runner: CliRunner) -> None:
             "hit_trifecta": True,
         }
     ]
-    with patch("boatrace_ai.cli.check_accuracy", return_value=records):
+    with patch("boatrace_ai.cli.check_accuracy", return_value=records), \
+         patch("boatrace_ai.cli.check_virtual_bets", return_value=[]):
         result = runner.invoke(cli, ["results", "check"])
         assert result.exit_code == 0
         assert "今回の比較" in result.output

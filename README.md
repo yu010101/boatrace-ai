@@ -1,6 +1,7 @@
 # Boatrace AI
 
-AI（Claude API）を使ったボートレース予想システム。
+AI（Claude API + LightGBM）を使ったボートレース予想システム。
+ML予測 → 推奨度スコアリング → note.com有料記事 → X自動投稿の一気通貫パイプライン。
 
 ## セットアップ
 
@@ -9,42 +10,123 @@ cd ~/projects/boatrace-ai
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+
+# ML機能を使う場合
+pip install -e ".[ml]"
+
+# X連携を使う場合
+pip install -e ".[social]"
+
+# note.com投稿を使う場合
+pip install -e ".[publish]"
 ```
 
 `.env` を作成:
 
 ```bash
 cp .env.example .env
-# ANTHROPIC_API_KEY を設定
+# ANTHROPIC_API_KEY を設定（必須）
+# NOTE_EMAIL / NOTE_PASSWORD（note.com投稿時）
+# TWITTER_API_KEY 等（X投稿時）
 ```
 
-## 使い方
+## コマンド一覧
+
+### 予測
 
 ```bash
-# 本日の全レース予測
+# 本日の全レース予測（ML+自動グレーディング+仮想ベット保存）
 boatrace predict today
-
-# 特定の場のみ
-boatrace predict today --stadium 1
-
-# 出走表だけ確認（API呼ばない）
-boatrace predict today --dry-run
+boatrace predict today --stadium 1          # 特定場のみ
+boatrace predict today --mode ml            # MLモード指定
+boatrace predict today --dry-run            # 出走表だけ確認
 
 # 単一レース予測
-boatrace predict race --stadium 1 --race 1
-
-# 結果を取得・保存
-boatrace results fetch 2026-02-27
-
-# 予測と結果を比較
-boatrace results check
-
-# 精度レポート
-boatrace stats
-
-# 詳細ログ
-boatrace -v predict today --stadium 1
+boatrace predict race --stadium 1 --race 3
+boatrace predict race -s 1 -r 3 -d 2026-03-02 --mode ml
 ```
+
+### MLモデル訓練
+
+```bash
+boatrace train                  # 過去90日のデータで訓練
+boatrace train --days 180       # 過去180日
+boatrace train --val-days 21    # 検証データ21日分
+```
+
+### 結果取得・比較
+
+```bash
+boatrace results fetch              # 本日の結果を取得
+boatrace results fetch 2026-03-01   # 指定日の結果
+boatrace results check              # 予測と結果を比較（+仮想ベット自動照合）
+boatrace stats                      # 精度レポート
+```
+
+### 回収率トラッキング
+
+```bash
+boatrace roi today              # 本日の回収率
+boatrace roi check              # 未照合の仮想ベットを結果と照合
+boatrace roi summary            # 直近30日の回収率サマリー
+boatrace roi summary --days 90  # 直近90日
+```
+
+### note.com 記事投稿
+
+```bash
+# アカウント管理
+boatrace note login             # ログイン（セッション取得）
+boatrace note status            # ログイン状態確認
+
+# 記事投稿
+boatrace publish today                  # 全レースを有料記事で投稿
+boatrace publish today --free           # 無料記事として投稿
+boatrace publish today --dry-run        # プレビューのみ
+boatrace publish race -s 1 -r 3        # 単一レース記事
+boatrace publish grades                 # 推奨度ランク一覧（無料記事）
+boatrace publish grades --dry-run       # プレビュー
+boatrace publish premium                # Sランクのみ一覧
+boatrace publish results                # 前日の的中レポート（+回収率）
+boatrace publish results 2026-03-01     # 指定日のレポート
+```
+
+### X (Twitter) 投稿
+
+```bash
+boatrace tweet morning              # 朝の推奨レースツイート
+boatrace tweet morning --dry-run    # プレビューのみ
+boatrace tweet hit                  # 的中ツイート（全的中ベット）
+boatrace tweet hit --dry-run
+boatrace tweet daily                # 日次サマリーツイート
+boatrace tweet daily --dry-run
+```
+
+## 運用フロー
+
+```bash
+# ── 朝（予測 → 記事 → ツイート） ──
+boatrace predict today --mode ml
+boatrace publish grades             # 無料: 全レース推奨度一覧
+boatrace tweet morning              # X: 推奨レース告知
+
+# ── 夜（結果 → 回収率 → ツイート → レポート） ──
+boatrace results fetch
+boatrace results check              # 精度判定 + 仮想ベット照合
+boatrace roi summary
+boatrace tweet hit                  # X: 的中報告
+boatrace tweet daily                # X: 日次成績サマリー
+boatrace publish results            # note: 的中レポート+回収率
+```
+
+## 推奨度ランク
+
+| ランク | 条件 | 意味 |
+|--------|------|------|
+| S | p1 >= 40% かつ top2 >= 55% | 高確信（有料で売る） |
+| A | p1 >= 30% かつ top2 >= 45% | 有力候補あり |
+| B | p1 >= 20% | 予測可能 |
+| C | それ以外 | 混戦（見送り推奨） |
 
 ## 競艇場番号
 

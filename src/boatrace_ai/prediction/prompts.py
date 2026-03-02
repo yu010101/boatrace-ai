@@ -64,6 +64,66 @@ def format_race_for_prompt(race: RaceProgram) -> str:
     return "\n".join(lines)
 
 
+ANALYSIS_SYSTEM_PROMPT = """\
+あなたは競艇予想の解説者です。
+AIモデルの予測結果が与えられます。出走表データから予測の根拠を読み解き、
+レース展開予測を日本語で簡潔に解説してください。
+
+## 解説のポイント
+- なぜその艇が有利なのか（コース・モーター・勝率等）
+- スタート展開の予測
+- 穴目があるとすればどのパターンか
+- 200字程度で簡潔に
+"""
+
+
+def format_ml_result_for_prompt(
+    race: RaceProgram,
+    predicted_order: list[int],
+    probabilities: dict[int, float],
+) -> str:
+    """Format ML prediction results for the analysis prompt."""
+    stadium = STADIUMS.get(race.race_stadium_number, f"場{race.race_stadium_number}")
+    grade = GRADES.get(race.race_grade_number, "")
+
+    lines = [
+        f"## {stadium} {race.race_number}R {grade} {race.race_subtitle}",
+        "",
+        "### AI予測結果",
+        f"予測着順: {' → '.join(str(n) for n in predicted_order)}",
+        "",
+        "### 各艇の勝率予測",
+    ]
+    for bn in predicted_order:
+        lines.append(f"  {bn}号艇: {probabilities.get(bn, 0):.1%}")
+
+    lines.append("")
+    lines.append("### 出走表")
+
+    race_text = format_race_for_prompt(race)
+    # Skip the header lines already added
+    for line in race_text.split("\n")[1:]:
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+ANALYSIS_TOOL = {
+    "name": "submit_analysis",
+    "description": "レース展開予測の解説を提出する",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "analysis": {
+                "type": "string",
+                "description": "日本語での解説。レース展開予測、注目ポイント等を200字程度で簡潔に記述",
+            },
+        },
+        "required": ["analysis"],
+    },
+}
+
+
 # tool_use schema for structured prediction output
 PREDICTION_TOOL = {
     "name": "submit_prediction",

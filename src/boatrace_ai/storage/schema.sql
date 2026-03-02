@@ -44,9 +44,54 @@ CREATE TABLE IF NOT EXISTS accuracy_log (
     UNIQUE(race_date, stadium_number, race_number)
 );
 
+-- ── Phase 2: 売る仕組み ──────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS race_grades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_date TEXT NOT NULL,
+    stadium_number INTEGER NOT NULL,
+    race_number INTEGER NOT NULL,
+    grade TEXT NOT NULL,             -- 'S', 'A', 'B', 'C'
+    top1_prob REAL NOT NULL,
+    top2_prob REAL NOT NULL,
+    top3_prob REAL NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(race_date, stadium_number, race_number)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_bets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_date TEXT NOT NULL,
+    stadium_number INTEGER NOT NULL,
+    race_number INTEGER NOT NULL,
+    bet_type TEXT NOT NULL,          -- "3連単", "2連単" etc.
+    combination TEXT NOT NULL,      -- "1-3-2", "1=2" etc.
+    bet_amount INTEGER NOT NULL DEFAULT 1000,
+    payout INTEGER NOT NULL DEFAULT 0,
+    is_hit INTEGER,                 -- NULL=未判定, 0=不的中, 1=的中
+    grade TEXT NOT NULL DEFAULT '',  -- ベット時の推奨度
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tweet_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tweet_type TEXT NOT NULL,        -- 'morning', 'hit', 'daily'
+    race_date TEXT NOT NULL,
+    stadium_number INTEGER,
+    race_number INTEGER,
+    tweet_id TEXT,                   -- X API返却ID
+    tweet_text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_predictions_date ON predictions(race_date);
 CREATE INDEX IF NOT EXISTS idx_predictions_lookup ON predictions(race_date, stadium_number, race_number);
 CREATE INDEX IF NOT EXISTS idx_results_date ON results(race_date);
 CREATE INDEX IF NOT EXISTS idx_results_lookup ON results(race_date, stadium_number, race_number);
 CREATE INDEX IF NOT EXISTS idx_accuracy_date ON accuracy_log(race_date);
+CREATE INDEX IF NOT EXISTS idx_race_grades_date ON race_grades(race_date);
+CREATE INDEX IF NOT EXISTS idx_virtual_bets_date ON virtual_bets(race_date);
+CREATE INDEX IF NOT EXISTS idx_virtual_bets_unchecked ON virtual_bets(is_hit) WHERE is_hit IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tweet_log_date ON tweet_log(race_date, tweet_type);

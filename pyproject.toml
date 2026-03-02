@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "boatrace-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI-powered boat race prediction system using Claude API"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,9 +14,21 @@ dependencies = [
     "anthropic>=0.40",
     "pydantic>=2.0",
     "python-dotenv>=1.0",
+    "markdown>=3.5",
 ]
 
 [project.optional-dependencies]
+ml = [
+    "lightgbm>=4.0",
+    "numpy>=1.24",
+    "scikit-learn>=1.3",
+]
+publish = [
+    "playwright>=1.40",
+]
+social = [
+    "tweepy>=4.14",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

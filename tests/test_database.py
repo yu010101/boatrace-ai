@@ -12,6 +12,7 @@ import pytest
 from boatrace_ai.data.models import PredictionResult, RaceResult
 from boatrace_ai.storage.database import (
     check_accuracy,
+    get_accuracy_for_date,
     get_predictions_for_date,
     get_stats,
     init_db,
@@ -210,3 +211,62 @@ def test_get_stats_with_data() -> None:
     assert stats["total_races"] == 2
     assert stats["hit_1st"] == 1
     assert stats["hit_1st_rate"] == 0.5
+
+
+# ── get_accuracy_for_date ─────────────────────────────────
+
+
+def test_get_accuracy_for_date_empty() -> None:
+    """No accuracy records for date returns empty list."""
+    records = get_accuracy_for_date("2026-03-01")
+    assert records == []
+
+
+def test_get_accuracy_for_date_returns_records() -> None:
+    """After check_accuracy, records should be retrievable by date."""
+    save_prediction("2026-02-28", 1, 1, _make_prediction())
+    save_result("2026-02-28", _make_result())
+    check_accuracy()
+
+    records = get_accuracy_for_date("2026-02-28")
+    assert len(records) == 1
+    assert records[0]["stadium_number"] == 1
+    assert records[0]["race_number"] == 1
+    assert records[0]["hit_1st"] is False  # predicted 1, actual 3
+    assert isinstance(records[0]["hit_1st"], bool)
+    assert isinstance(records[0]["hit_trifecta"], bool)
+
+
+def test_get_accuracy_for_date_ordered() -> None:
+    """Records are ordered by stadium_number, race_number."""
+    # Race at stadium 6, race 3
+    pred1 = _make_prediction()
+    save_prediction("2026-02-28", 6, 3, pred1)
+    result1 = _make_result()
+    result1.race_stadium_number = 6
+    result1.race_number = 3
+    save_result("2026-02-28", result1)
+
+    # Race at stadium 1, race 1
+    save_prediction("2026-02-28", 1, 1, _make_prediction())
+    save_result("2026-02-28", _make_result())
+
+    check_accuracy()
+
+    records = get_accuracy_for_date("2026-02-28")
+    assert len(records) == 2
+    assert records[0]["stadium_number"] == 1
+    assert records[1]["stadium_number"] == 6
+
+
+def test_get_accuracy_for_date_filters_by_date() -> None:
+    """Only records for the specified date are returned."""
+    save_prediction("2026-02-28", 1, 1, _make_prediction())
+    save_result("2026-02-28", _make_result())
+    check_accuracy()
+
+    records = get_accuracy_for_date("2026-03-01")
+    assert records == []
+
+    records = get_accuracy_for_date("2026-02-28")
+    assert len(records) == 1

@@ -1,0 +1,154 @@
+name: Boatrace AI Daily
+
+on:
+  schedule:
+    - cron: '30 22 * * *'   # morning (7:30 JST)
+    - cron: '30 12 * * *'   # evening (21:30 JST)
+    - cron: '0 18 * * 6'    # weekly train (Sunday 3:00 JST)
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Job to run'
+        required: true
+        type: choice
+        options:
+          - morning
+          - evening
+          - train
+
+env:
+  BOATRACE_DB_PATH: ${{ github.workspace }}/.boatrace-data/boatrace.db
+  BOATRACE_MODEL_PATH: ${{ github.workspace }}/.boatrace-data/model.lgb
+
+jobs:
+  morning:
+    if: >-
+      github.event.schedule == '30 22 * * *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'morning')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[ml]"
+
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}
+          restore-keys: boatrace-data-
+
+      - name: Ensure data directory
+        run: mkdir -p .boatrace-data
+
+      - name: Predict today
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: boatrace predict today --mode ml
+
+      - name: Publish grades (dry-run)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: boatrace publish grades --dry-run
+
+      - name: Save data cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}-morning
+
+  evening:
+    if: >-
+      github.event.schedule == '30 12 * * *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'evening')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[ml]"
+
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}
+          restore-keys: boatrace-data-
+
+      - name: Ensure data directory
+        run: mkdir -p .boatrace-data
+
+      - name: Fetch results
+        run: boatrace results fetch
+
+      - name: Check results
+        run: boatrace results check
+
+      - name: Check ROI
+        run: boatrace roi check
+
+      - name: ROI today
+        run: boatrace roi today
+
+      - name: Publish results (dry-run)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: boatrace publish results --dry-run
+
+      - name: Save data cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}-evening
+
+  weekly-train:
+    if: >-
+      github.event.schedule == '0 18 * * 6' ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'train')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[ml]"
+
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}
+          restore-keys: boatrace-data-
+
+      - name: Ensure data directory
+        run: mkdir -p .boatrace-data
+
+      - name: Train model
+        run: boatrace train --days 90
+
+      - name: Save data cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}-train

@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from boatrace_ai import config
 from boatrace_ai.data.models import PredictionResult, RaceProgram
 from boatrace_ai.ml.bets import generate_bets
 from boatrace_ai.ml.features import FEATURE_NAMES, extract_features
+
+if TYPE_CHECKING:
+    from boatrace_ai.data.odds import OddsData
+    from boatrace_ai.ml.bets import BetRecommendation
 
 log = logging.getLogger(__name__)
 
@@ -99,22 +104,34 @@ def _predict_raw(
     return predicted_order, norm_probs
 
 
-def predict_race_ml(race: RaceProgram, model_path: Path | None = None) -> PredictionResult:
-    """Predict a single race using the ML model.
-
-    Returns PredictionResult with ML-derived order, confidence, bets, analysis.
-    """
-    predicted_order, norm_probs = _predict_raw(race, model_path)
-
-    # Confidence: based on how dominant the top prediction is
+def _build_prediction(
+    race: RaceProgram,
+    predicted_order: list[int],
+    norm_probs: dict[int, float],
+    odds_data: OddsData | None,
+) -> PredictionResult:
+    """Core prediction logic: confidence, bets, analysis → PredictionResult."""
     top_prob = norm_probs[predicted_order[0]]
-    confidence = min(max(top_prob * 1.5, 0.1), 0.95)  # Scale up, clamp to [0.1, 0.95]
+    confidence = min(max(top_prob * 1.5, 0.1), 0.95)
 
-    # Generate recommended bets
-    ordered_probs = [norm_probs[bn] for bn in predicted_order]
-    recommended_bets = generate_bets(predicted_order, ordered_probs)
+    if odds_data is not None:
+        from boatrace_ai.ml.bets import generate_bets_ev
 
-    # Generate simple analysis
+        ev_bets = generate_bets_ev(
+            predicted_order,
+            norm_probs,
+            odds_win=odds_data.win,
+            odds_exacta=odds_data.exacta,
+            odds_quinella=odds_data.quinella,
+            odds_trifecta=odds_data.trifecta,
+            odds_trio=odds_data.trio,
+        )
+        recommended_bets = [b.to_bet_string() for b in ev_bets]
+        _last_ev_bets_cache[:] = [ev_bets]
+    else:
+        ordered_probs = [norm_probs[bn] for bn in predicted_order]
+        recommended_bets = generate_bets(predicted_order, ordered_probs)
+
     analysis = _build_analysis(race, predicted_order, norm_probs)
 
     return PredictionResult(
@@ -125,8 +142,40 @@ def predict_race_ml(race: RaceProgram, model_path: Path | None = None) -> Predic
     )
 
 
+def predict_race_ml(
+    race: RaceProgram,
+    model_path: Path | None = None,
+    odds_data: OddsData | None = None,
+) -> PredictionResult:
+    """Predict a single race using the ML model.
+
+    Args:
+        race: Race program data.
+        model_path: Optional custom model path.
+        odds_data: Optional OddsData from odds scraper. If provided,
+                   uses EV-based bet generation with Kelly sizing.
+
+    Returns PredictionResult with ML-derived order, confidence, bets, analysis.
+    """
+    predicted_order, norm_probs = _predict_raw(race, model_path)
+    return _build_prediction(race, predicted_order, norm_probs, odds_data)
+
+
+# Single-entry cache for the most recent EV bets (avoids memory leak)
+_last_ev_bets_cache: list[list[BetRecommendation]] = []
+
+
+def get_last_ev_bets(race: RaceProgram) -> list[BetRecommendation] | None:
+    """Retrieve and consume the last EV bets generated (if any)."""
+    if _last_ev_bets_cache:
+        return _last_ev_bets_cache.pop()
+    return None
+
+
 def predict_race_ml_with_probs(
-    race: RaceProgram, model_path: Path | None = None
+    race: RaceProgram,
+    model_path: Path | None = None,
+    odds_data: OddsData | None = None,
 ) -> tuple[PredictionResult, list[float]]:
     """Predict a race and return both PredictionResult and ordered probabilities.
 
@@ -135,21 +184,8 @@ def predict_race_ml_with_probs(
         probability of the i-th predicted boat finishing 1st.
     """
     predicted_order, norm_probs = _predict_raw(race, model_path)
-
-    top_prob = norm_probs[predicted_order[0]]
-    confidence = min(max(top_prob * 1.5, 0.1), 0.95)
-
+    prediction = _build_prediction(race, predicted_order, norm_probs, odds_data)
     ordered_probs = [norm_probs[bn] for bn in predicted_order]
-    recommended_bets = generate_bets(predicted_order, ordered_probs)
-    analysis = _build_analysis(race, predicted_order, norm_probs)
-
-    prediction = PredictionResult(
-        predicted_order=predicted_order,
-        confidence=round(confidence, 2),
-        recommended_bets=recommended_bets,
-        analysis=analysis,
-    )
-
     return prediction, ordered_probs
 
 

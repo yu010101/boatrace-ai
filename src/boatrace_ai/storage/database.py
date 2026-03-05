@@ -22,11 +22,27 @@ def _get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist, and run migrations."""
     schema = resources.files("boatrace_ai.storage").joinpath("schema.sql").read_text()
     conn = _get_connection()
     conn.executescript(schema)
+    # Migrate: add EV columns to virtual_bets if missing
+    _migrate_virtual_bets_ev(conn)
     conn.close()
+
+
+def _migrate_virtual_bets_ev(conn: sqlite3.Connection) -> None:
+    """Add model_prob, market_odds, ev columns to virtual_bets if they don't exist."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(virtual_bets)").fetchall()}
+    migrations = [
+        ("model_prob", "ALTER TABLE virtual_bets ADD COLUMN model_prob REAL"),
+        ("market_odds", "ALTER TABLE virtual_bets ADD COLUMN market_odds REAL"),
+        ("ev", "ALTER TABLE virtual_bets ADD COLUMN ev REAL"),
+    ]
+    for col_name, sql in migrations:
+        if col_name not in columns:
+            conn.execute(sql)
+    conn.commit()
 
 
 def save_prediction(
@@ -295,28 +311,42 @@ def save_virtual_bets(
     race_number: int,
     bets: list[str],
     grade: str = "",
+    bet_amounts: list[int] | None = None,
+    model_probs: list[float] | None = None,
+    market_odds: list[float] | None = None,
+    evs: list[float] | None = None,
 ) -> None:
     """Save virtual bets for a race.
 
     Args:
         bets: List of bet strings like "3連単 1-3-2", "2連複 1=2"
         grade: Race grade at time of bet
+        bet_amounts: Per-bet amounts (default ¥1,000 each if None)
+        model_probs: Per-bet model probabilities (optional)
+        market_odds: Per-bet market odds (optional)
+        evs: Per-bet expected values (optional)
     """
     conn = _get_connection()
     try:
-        for bet_str in bets:
+        for i, bet_str in enumerate(bets):
             parts = bet_str.split(" ", 1)
             if len(parts) != 2:
                 log.warning("Skipping invalid bet string: %s", bet_str)
                 continue
             bet_type, combination = parts
+            amount = bet_amounts[i] if bet_amounts and i < len(bet_amounts) else 1000
+            m_prob = model_probs[i] if model_probs and i < len(model_probs) else None
+            m_odds = market_odds[i] if market_odds and i < len(market_odds) else None
+            ev = evs[i] if evs and i < len(evs) else None
             conn.execute(
                 """INSERT INTO virtual_bets
                    (race_date, stadium_number, race_number,
-                    bet_type, combination, bet_amount, grade)
-                   VALUES (?, ?, ?, ?, ?, 1000, ?)""",
+                    bet_type, combination, bet_amount, grade,
+                    model_prob, market_odds, ev)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (race_date, stadium_number, race_number,
-                 bet_type, combination, grade),
+                 bet_type, combination, amount, grade,
+                 m_prob, m_odds, ev),
             )
         conn.commit()
     finally:
@@ -444,6 +474,91 @@ def get_tweet_log(race_date: str, tweet_type: str | None = None) -> list[dict]:
                 (race_date,),
             ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_predictions_with_results(start_date: str, end_date: str | None = None) -> list[dict]:
+    """Get predictions joined with results for backtest analysis.
+
+    Returns rows with predicted_order, confidence, recommended_bets,
+    payouts_json for races that have both prediction and result data.
+    """
+    conn = _get_connection()
+    try:
+        if end_date:
+            rows = conn.execute(
+                """SELECT p.race_date, p.stadium_number, p.race_number,
+                          p.predicted_order, p.confidence, p.recommended_bets,
+                          r.actual_order, r.payouts_json
+                   FROM predictions p
+                   JOIN results r
+                     ON p.race_date = r.race_date
+                    AND p.stadium_number = r.stadium_number
+                    AND p.race_number = r.race_number
+                   WHERE p.race_date >= ? AND p.race_date <= ?
+                     AND r.payouts_json IS NOT NULL
+                   ORDER BY p.race_date, p.stadium_number, p.race_number""",
+                (start_date, end_date),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT p.race_date, p.stadium_number, p.race_number,
+                          p.predicted_order, p.confidence, p.recommended_bets,
+                          r.actual_order, r.payouts_json
+                   FROM predictions p
+                   JOIN results r
+                     ON p.race_date = r.race_date
+                    AND p.stadium_number = r.stadium_number
+                    AND p.race_number = r.race_number
+                   WHERE p.race_date >= ?
+                     AND r.payouts_json IS NOT NULL
+                   ORDER BY p.race_date, p.stadium_number, p.race_number""",
+                (start_date,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── Phase 2.5: race_odds ─────────────────────────────────
+
+
+def save_race_odds(
+    race_date: str,
+    stadium_number: int,
+    race_number: int,
+    odds_json: str,
+    fetched_at: str,
+) -> None:
+    """Save odds data as JSON for a race."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO race_odds
+               (race_date, stadium_number, race_number, odds_json, fetched_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (race_date, stadium_number, race_number, odds_json, fetched_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_race_odds(
+    race_date: str, stadium_number: int, race_number: int,
+    max_age_hours: float = 3.0,
+) -> dict | None:
+    """Get cached odds for a race, ignoring entries older than max_age_hours."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            """SELECT * FROM race_odds
+               WHERE race_date = ? AND stadium_number = ? AND race_number = ?
+                 AND created_at > datetime('now', ? || ' hours')""",
+            (race_date, stadium_number, race_number, f"-{max_age_hours}"),
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
 

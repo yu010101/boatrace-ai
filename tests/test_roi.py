@@ -100,7 +100,7 @@ def _payouts_json(**kwargs) -> str:
 def test_match_trifecta_hit() -> None:
     payouts = _payouts_json(trifecta=[{"combination": "1-3-2", "payout": 1500}])
     result = match_bet_to_payout("3連単", "1-3-2", payouts)
-    # 1500 * 10 = 15000
+    # 1500 * 1000 / 100 = 15000 (default ¥1,000 bet)
     assert result == 15000
 
 
@@ -135,6 +135,17 @@ def test_match_win_hit() -> None:
     payouts = _payouts_json(win=[{"combination": "1", "payout": 200}])
     result = match_bet_to_payout("単勝", "1", payouts)
     assert result == 2000
+
+
+def test_match_trifecta_hit_variable_amount() -> None:
+    """Variable bet amounts should scale payouts correctly."""
+    payouts = _payouts_json(trifecta=[{"combination": "1-3-2", "payout": 1500}])
+    # ¥500 bet: 1500 * 500 / 100 = 7500
+    result = match_bet_to_payout("3連単", "1-3-2", payouts, bet_amount=500)
+    assert result == 7500
+    # ¥2000 bet: 1500 * 2000 / 100 = 30000
+    result = match_bet_to_payout("3連単", "1-3-2", payouts, bet_amount=2000)
+    assert result == 30000
 
 
 def test_match_unknown_bet_type() -> None:
@@ -191,6 +202,31 @@ def test_save_virtual_bets() -> None:
     assert rows[0]["bet_amount"] == 1000
     assert rows[0]["grade"] == "S"
     assert rows[0]["is_hit"] is None
+
+
+def test_save_virtual_bets_variable_amounts() -> None:
+    """Save bets with variable amounts and EV metadata."""
+    bets = ["単勝 1", "3連単 1-3-2"]
+    save_virtual_bets(
+        "2026-02-28", 1, 1, bets, grade="S",
+        bet_amounts=[500, 2000],
+        model_probs=[0.40, 0.05],
+        market_odds=[4.0, 200.0],
+        evs=[0.6, 9.0],
+    )
+
+    from boatrace_ai.storage.database import _get_connection
+    conn = _get_connection()
+    rows = conn.execute("SELECT * FROM virtual_bets ORDER BY id").fetchall()
+    conn.close()
+
+    assert len(rows) == 2
+    assert rows[0]["bet_amount"] == 500
+    assert rows[0]["model_prob"] == 0.40
+    assert rows[0]["market_odds"] == 4.0
+    assert rows[0]["ev"] == 0.6
+    assert rows[1]["bet_amount"] == 2000
+    assert rows[1]["ev"] == 9.0
 
 
 def test_save_virtual_bets_invalid_format() -> None:

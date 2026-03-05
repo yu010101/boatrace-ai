@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
 import pytest
 from click.testing import CliRunner
 
-from boatrace_ai.cli import _parse_date, cli
+from boatrace_ai.cli import _fetch_odds_safe, _parse_date, cli
 from boatrace_ai.data.models import PredictionResult, ProgramsResponse, ResultsResponse
 
 
@@ -196,3 +198,60 @@ def test_stats_with_data(runner: CliRunner) -> None:
         result = runner.invoke(cli, ["stats"])
         assert result.exit_code == 0
         assert "精度レポート" in result.output
+
+
+# ── _fetch_odds_safe ─────────────────────────────────────
+
+
+def _make_race(stadium: int = 1, race_num: int = 1, race_date: str = "2026-03-04"):
+    """Create a minimal race-like object for testing."""
+    return SimpleNamespace(
+        race_stadium_number=stadium,
+        race_number=race_num,
+        race_date=race_date,
+    )
+
+
+def test_fetch_odds_safe_success() -> None:
+    """Successful odds fetch returns OddsData and caches to DB."""
+    from boatrace_ai.data.odds import OddsData
+
+    mock_odds = OddsData(
+        win={1: 2.3, 2: 8.5},
+        exacta={"1-2": 15.0},
+        fetched_at="2026-03-04T07:30:00",
+    )
+    race = _make_race()
+
+    with patch("boatrace_ai.data.odds.fetch_odds", new_callable=AsyncMock, return_value=mock_odds):
+        with patch("boatrace_ai.cli.save_race_odds") as mock_save:
+            result = asyncio.run(_fetch_odds_safe(race))
+
+    assert result is mock_odds
+    mock_save.assert_called_once()
+    args = mock_save.call_args
+    assert args[0][0] == "2026-03-04"  # race_date
+    assert args[0][1] == 1  # stadium_number
+    assert args[0][2] == 1  # race_number
+
+
+def test_fetch_odds_safe_returns_none_on_failure() -> None:
+    """Network failure returns None (graceful degradation)."""
+    race = _make_race()
+
+    with patch("boatrace_ai.data.odds.fetch_odds", new_callable=AsyncMock, side_effect=Exception("timeout")):
+        result = asyncio.run(_fetch_odds_safe(race))
+
+    assert result is None
+
+
+def test_fetch_odds_safe_returns_none_when_no_odds() -> None:
+    """fetch_odds returning None is passed through without caching."""
+    race = _make_race()
+
+    with patch("boatrace_ai.data.odds.fetch_odds", new_callable=AsyncMock, return_value=None):
+        with patch("boatrace_ai.cli.save_race_odds") as mock_save:
+            result = asyncio.run(_fetch_odds_safe(race))
+
+    assert result is None
+    mock_save.assert_not_called()

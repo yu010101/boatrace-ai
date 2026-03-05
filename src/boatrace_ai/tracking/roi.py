@@ -51,16 +51,19 @@ def _normalize_combination(combination: str) -> list[str]:
     return [combination]
 
 
-def match_bet_to_payout(bet_type: str, combination: str, payouts_json: str) -> int:
+def match_bet_to_payout(
+    bet_type: str, combination: str, payouts_json: str, bet_amount: int = 1000,
+) -> int:
     """Match a bet against payouts and return the payout amount.
 
     Args:
         bet_type: Japanese bet type ("3連単", "2連複", etc.)
         combination: Bet combination ("1-3-2", "1=2", etc.)
         payouts_json: JSON string of payouts from results table
+        bet_amount: Actual bet amount in yen (default 1000)
 
     Returns:
-        Payout amount scaled to 1000 yen bet (0 if no match).
+        Payout amount scaled to actual bet amount (0 if no match).
     """
     payout_key = BET_TYPE_MAP.get(bet_type)
     if not payout_key:
@@ -81,8 +84,9 @@ def match_bet_to_payout(bet_type: str, combination: str, payouts_json: str) -> i
     for entry in payout_entries:
         entry_combo = entry.get("combination", "")
         if entry_combo in patterns:
-            # Payouts are per 100 yen; scale to 1000 yen bet
-            return entry.get("payout", 0) * 10
+            # Payouts are per 100 yen; scale to actual bet amount
+            payout_per_100 = entry.get("payout", 0)
+            return payout_per_100 * bet_amount // 100
 
     return 0
 
@@ -107,6 +111,7 @@ def check_virtual_bets() -> list[dict]:
             bet["bet_type"],
             bet["combination"],
             bet["payouts_json"],
+            bet_amount=bet.get("bet_amount", 1000),
         )
         is_hit = 1 if payout > 0 else 0
         update_virtual_bet(bet["id"], is_hit, payout)

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import anthropic
 
 from boatrace_ai import config
 from boatrace_ai.data.models import PredictionResult, RaceProgram
+
+if TYPE_CHECKING:
+    from boatrace_ai.data.odds import OddsData
 from boatrace_ai.prediction.prompts import (
     ANALYSIS_SYSTEM_PROMPT,
     ANALYSIS_TOOL,
@@ -79,7 +83,9 @@ async def predict_races(races: list[RaceProgram]) -> list[tuple[RaceProgram, Pre
     return results
 
 
-async def predict_race_auto(race: RaceProgram, mode: str = "auto") -> PredictionResult:
+async def predict_race_auto(
+    race: RaceProgram, mode: str = "auto", odds_data: OddsData | None = None,
+) -> PredictionResult:
     """Dispatcher: choose prediction method based on mode.
 
     Modes:
@@ -87,20 +93,25 @@ async def predict_race_auto(race: RaceProgram, mode: str = "auto") -> Prediction
         ml      — ML only (raises if no model).
         hybrid  — ML prediction + Claude analysis text.
         claude  — Claude only (original behavior).
+
+    Args:
+        odds_data: Optional OddsData for EV-based betting.
     """
     if mode == "auto":
         mode = "ml" if config.MODEL_PATH.exists() else "claude"
 
     if mode == "ml":
         from boatrace_ai.ml.model import predict_race_ml
-        return predict_race_ml(race)
+        return predict_race_ml(race, odds_data=odds_data)
     elif mode == "hybrid":
-        return await predict_race_hybrid(race)
+        return await predict_race_hybrid(race, odds_data=odds_data)
     else:
         return await predict_race(race)
 
 
-async def predict_race_hybrid(race: RaceProgram) -> PredictionResult:
+async def predict_race_hybrid(
+    race: RaceProgram, odds_data: OddsData | None = None,
+) -> PredictionResult:
     """Hybrid mode: ML prediction + Claude analysis.
 
     1. ML model produces order, confidence, bets.
@@ -109,8 +120,8 @@ async def predict_race_hybrid(race: RaceProgram) -> PredictionResult:
     """
     from boatrace_ai.ml.model import predict_race_ml
 
-    # Step 1: ML prediction
-    ml_result = predict_race_ml(race)
+    # Step 1: ML prediction (with odds if available)
+    ml_result = predict_race_ml(race, odds_data=odds_data)
 
     # Step 2: Build probability map from ML analysis
     # Parse probabilities from the ML analysis (simple approach)

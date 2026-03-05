@@ -52,6 +52,7 @@ from boatrace_ai.storage.database import (
     init_db,
     save_prediction,
     save_race_grade,
+    save_race_odds,
     save_result,
     save_virtual_bets,
 )
@@ -80,7 +81,7 @@ def _setup_logging(verbose: bool) -> None:
     )
 
 
-def _try_grade_and_save(race, prediction, mode: str) -> str | None:
+def _try_grade_and_save(race, prediction, mode: str, odds_data=None) -> str | None:
     """Try to grade a race and save virtual bets. Returns grade string or None."""
     if mode not in ("ml", "auto"):
         return None
@@ -88,9 +89,9 @@ def _try_grade_and_save(race, prediction, mode: str) -> str | None:
         return None
 
     try:
-        from boatrace_ai.ml.model import predict_race_ml_with_probs
+        from boatrace_ai.ml.model import get_last_ev_bets, predict_race_ml_with_probs
 
-        _, ordered_probs = predict_race_ml_with_probs(race)
+        _, ordered_probs = predict_race_ml_with_probs(race, odds_data=odds_data)
         grade_result = grade_race(ordered_probs)
         save_race_grade(
             race.race_date,
@@ -104,8 +105,21 @@ def _try_grade_and_save(race, prediction, mode: str) -> str | None:
         )
         display_race_grade(grade_result)
 
-        # Save virtual bets
-        if prediction.recommended_bets:
+        # Save virtual bets with EV metadata if available
+        ev_bets = get_last_ev_bets(race)
+        if ev_bets:
+            save_virtual_bets(
+                race.race_date,
+                race.race_stadium_number,
+                race.race_number,
+                [b.to_bet_string() for b in ev_bets],
+                grade=grade_result.grade.value,
+                bet_amounts=[b.bet_amount for b in ev_bets],
+                model_probs=[b.model_prob for b in ev_bets],
+                market_odds=[b.market_odds for b in ev_bets],
+                evs=[b.ev for b in ev_bets],
+            )
+        elif prediction.recommended_bets:
             save_virtual_bets(
                 race.race_date,
                 race.race_stadium_number,
@@ -146,6 +160,42 @@ def predict_today(stadium: int | None, dry_run: bool, mode: str) -> None:
     asyncio.run(_predict_today(stadium, dry_run, mode))
 
 
+async def _fetch_odds_safe(race):
+    """Fetch odds for a race, returning None on failure (graceful degradation)."""
+    try:
+        from boatrace_ai.data.odds import fetch_odds
+
+        import json
+
+        odds = await fetch_odds(race.race_number, race.race_stadium_number, race.race_date)
+        if odds is not None:
+            # Cache to DB
+            odds_dict = {
+                "win": odds.win,
+                "exacta": odds.exacta,
+                "quinella": odds.quinella,
+                "trifecta": odds.trifecta,
+                "trio": odds.trio,
+                "fetched_at": odds.fetched_at,
+            }
+            save_race_odds(
+                race.race_date,
+                race.race_stadium_number,
+                race.race_number,
+                json.dumps(odds_dict, ensure_ascii=False),
+                odds.fetched_at,
+            )
+            ev_count = len(odds.win) + len(odds.exacta) + len(odds.trifecta)
+            logging.getLogger(__name__).info(
+                "Odds fetched: stadium=%d race=%d (%d entries)",
+                race.race_stadium_number, race.race_number, ev_count,
+            )
+        return odds
+    except Exception as e:
+        logging.getLogger(__name__).warning("Odds fetch failed for %dR: %s", race.race_number, e)
+        return None
+
+
 async def _predict_today(stadium: int | None, dry_run: bool, mode: str = "auto") -> None:
     try:
         with console.status("[bold green]出走表を取得中..."):
@@ -174,8 +224,13 @@ async def _predict_today(stadium: int | None, dry_run: bool, mode: str = "auto")
         s = STADIUMS.get(race.race_stadium_number, "?")
         display_progress(i, total, f"{s} {race.race_number}R 予測中...")
 
+        # Fetch odds for EV-based betting
+        odds_data = None
+        if mode in ("ml", "auto") and config.MODEL_PATH.exists():
+            odds_data = await _fetch_odds_safe(race)
+
         try:
-            prediction = await predict_race_auto(race, mode=mode)
+            prediction = await predict_race_auto(race, mode=mode, odds_data=odds_data)
             display_prediction(race, prediction)
             save_prediction(
                 race.race_date,
@@ -183,7 +238,7 @@ async def _predict_today(stadium: int | None, dry_run: bool, mode: str = "auto")
                 race.race_number,
                 prediction,
             )
-            _try_grade_and_save(race, prediction, mode)
+            _try_grade_and_save(race, prediction, mode, odds_data=odds_data)
         except Exception as e:
             display_error(f"{s} {race.race_number}R の予測に失敗: {e}")
 
@@ -215,9 +270,14 @@ async def _predict_single(stadium: int, race_num: int, date_str: str | None, mod
 
     race = races[0]
     try:
+        # Fetch odds for EV-based betting
+        odds_data = None
+        if mode in ("ml", "auto") and config.MODEL_PATH.exists():
+            odds_data = await _fetch_odds_safe(race)
+
         status_label = "MLが予測中..." if mode in ("ml", "auto") and config.MODEL_PATH.exists() else "AIが予測中..."
         with console.status(f"[bold green]{status_label}"):
-            prediction = await predict_race_auto(race, mode=mode)
+            prediction = await predict_race_auto(race, mode=mode, odds_data=odds_data)
         display_prediction(race, prediction)
         save_prediction(
             race.race_date,
@@ -225,7 +285,7 @@ async def _predict_single(stadium: int, race_num: int, date_str: str | None, mod
             race.race_number,
             prediction,
         )
-        _try_grade_and_save(race, prediction, mode)
+        _try_grade_and_save(race, prediction, mode, odds_data=odds_data)
     except Exception as e:
         display_error(f"予測に失敗: {e}")
 
@@ -395,7 +455,7 @@ def roi_check(date_str: str | None) -> None:
     if checked:
         hit_count = sum(1 for b in checked if b.get("is_hit") == 1)
         total_payout = sum(b.get("payout", 0) for b in checked)
-        total_invested = len(checked) * 1000
+        total_invested = sum(b.get("bet_amount", 1000) for b in checked)
         console.print(
             f"\n  [bold]照合完了: {len(checked)}件 / 的中: {hit_count}件"
             f" / 投資: ¥{total_invested:,} / 払戻: ¥{total_payout:,}[/bold]"
@@ -651,17 +711,20 @@ async def _publish_today(
         s = STADIUMS.get(race.race_stadium_number, "?")
         label = f"{s} {race.race_number}R"
 
-        # Predict
+        # Predict (with odds for EV-based betting)
         display_progress(i, total, f"{label} 予測中...")
+        odds_data = None
+        if mode in ("ml", "auto") and config.MODEL_PATH.exists():
+            odds_data = await _fetch_odds_safe(race)
         try:
-            prediction = await predict_race_auto(race, mode=mode)
+            prediction = await predict_race_auto(race, mode=mode, odds_data=odds_data)
             save_prediction(
                 race.race_date,
                 race.race_stadium_number,
                 race.race_number,
                 prediction,
             )
-            grade_str = _try_grade_and_save(race, prediction, mode)
+            grade_str = _try_grade_and_save(race, prediction, mode, odds_data=odds_data)
         except Exception as e:
             display_error(f"{label} の予測に失敗: {e}")
             failed += 1
@@ -728,10 +791,15 @@ async def _publish_race(stadium: int, race_num: int, date_str: str | None, dry_r
 
     race = races[0]
 
+    # Fetch odds for EV-based betting
+    odds_data = None
+    if mode in ("ml", "auto") and config.MODEL_PATH.exists():
+        odds_data = await _fetch_odds_safe(race)
+
     # Predict
     try:
         with console.status("[bold green]AIが予測中..."):
-            prediction = await predict_race_auto(race, mode=mode)
+            prediction = await predict_race_auto(race, mode=mode, odds_data=odds_data)
         display_prediction(race, prediction)
         save_prediction(
             race.race_date,
@@ -739,7 +807,7 @@ async def _publish_race(stadium: int, race_num: int, date_str: str | None, dry_r
             race.race_number,
             prediction,
         )
-        grade_str = _try_grade_and_save(race, prediction, mode)
+        grade_str = _try_grade_and_save(race, prediction, mode, odds_data=odds_data)
     except Exception as e:
         display_error(f"予測に失敗: {e}")
         return
@@ -907,6 +975,52 @@ def publish_premium(date_str: str | None, dry_run: bool) -> None:
         return
 
     console.print("[dim]Sランク有料記事は publish today/race で個別に投稿してください。[/dim]")
+
+
+# ── backtest ─────────────────────────────────────────────
+
+
+@cli.command("backtest")
+@click.option("--days", "-d", default=30, type=click.IntRange(1, 365), help="バックテスト日数 (default: 30)")
+@click.option("--min-ev", default=0.20, type=float, help="最小EV閾値 (default: 0.20)")
+@click.option("--kelly", default=0.25, type=float, help="Kelly fraction (default: 0.25)")
+def backtest_cmd(days: int, min_ev: float, kelly: float) -> None:
+    """EV戦略のバックテスト（過去データで新旧ROI比較）"""
+    from boatrace_ai.ml.backtest import run_backtest
+
+    start = (date.today() - timedelta(days=days)).isoformat()
+    results = run_backtest(start_date=start, min_ev=min_ev, kelly_fraction=kelly)
+
+    console.print(f"\n[bold]バックテスト結果 (過去{days}日)[/bold]\n")
+
+    console.print(f"[bold]旧戦略（確信度ベース・固定¥1,000）[/bold]")
+    old = results["old"]
+    console.print(f"  ベット数: {old['total_bets']}")
+    console.print(f"  投資額: ¥{old['total_invested']:,}")
+    console.print(f"  払戻額: ¥{old['total_payout']:,}")
+    console.print(f"  損益: ¥{old['profit']:,}")
+    old_roi_pct = old['roi'] * 100
+    roi_color = "green" if old['roi'] >= 1.0 else "red"
+    console.print(f"  ROI: [{roi_color}]{old_roi_pct:.1f}%[/{roi_color}]")
+
+    console.print(f"\n[bold]新戦略（EV > {min_ev:.0%} + Kelly {kelly:.0%}）[/bold]")
+    new = results["new"]
+    console.print(f"  ベット数: {new['total_bets']}")
+    console.print(f"  投資額: ¥{new['total_invested']:,}")
+    console.print(f"  払戻額: ¥{new['total_payout']:,}")
+    console.print(f"  損益: ¥{new['profit']:,}")
+    new_roi_pct = new['roi'] * 100
+    roi_color = "green" if new['roi'] >= 1.0 else "red"
+    console.print(f"  ROI: [{roi_color}]{new_roi_pct:.1f}%[/{roi_color}]")
+
+    improvement = new_roi_pct - old_roi_pct
+    imp_color = "green" if improvement > 0 else "red"
+    console.print(f"\n  [bold]改善: [{imp_color}]{improvement:+.1f}pp[/{imp_color}][/bold]")
+
+    if new['roi'] >= 1.0:
+        console.print("\n  [bold green]Go/No-go: GO — 新戦略は損益分岐点以上です[/bold green]")
+    else:
+        console.print("\n  [bold yellow]Go/No-go: CAUTION — ROI < 100%、パラメータ調整を検討してください[/bold yellow]")
 
 
 if __name__ == "__main__":

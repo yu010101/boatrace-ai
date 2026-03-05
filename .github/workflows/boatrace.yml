@@ -19,6 +19,7 @@ on:
 env:
   BOATRACE_DB_PATH: ${{ github.workspace }}/.boatrace-data/boatrace.db
   BOATRACE_MODEL_PATH: ${{ github.workspace }}/.boatrace-data/model.lgb
+  BOATRACE_EV_MIN: '0.30'
 
 jobs:
   morning:

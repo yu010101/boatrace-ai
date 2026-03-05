@@ -26,7 +26,7 @@ MODEL_META_PATH: Path = MODEL_PATH.with_suffix(".meta.json")
 PREDICTION_MODE: str = os.environ.get("BOATRACE_PREDICTION_MODE", "auto")  # auto|ml|claude|hybrid
 
 # EV-based betting strategy settings
-EV_MIN: float = float(os.environ.get("BOATRACE_EV_MIN", "0.20"))  # Minimum EV threshold (20%)
+EV_MIN: float = float(os.environ.get("BOATRACE_EV_MIN", "0.30"))  # Minimum EV threshold (30%)
 EV_KELLY_FRACTION: float = float(os.environ.get("BOATRACE_KELLY_FRACTION", "0.25"))  # Quarter-Kelly
 EV_BANKROLL: int = int(os.environ.get("BOATRACE_BANKROLL", "100000"))  # ¥100,000
 

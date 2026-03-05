@@ -37,7 +37,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[ml]"
+        run: |
+          pip install -e ".[ml]"
+          pip install playwright
+          playwright install chromium --with-deps
 
       - name: Restore data cache
         uses: actions/cache/restore@v4
@@ -50,14 +53,14 @@ jobs:
         run: mkdir -p .boatrace-data
 
       - name: Predict today
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: boatrace predict today --mode ml
 
-      - name: Publish grades (dry-run)
+      - name: Publish grades to note.com
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: boatrace publish grades --dry-run
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+        run: boatrace publish grades
 
       - name: Save data cache
         uses: actions/cache/save@v4
@@ -81,7 +84,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[ml]"
+        run: |
+          pip install -e ".[ml]"
+          pip install playwright
+          playwright install chromium --with-deps
 
       - name: Restore data cache
         uses: actions/cache/restore@v4
@@ -105,10 +111,12 @@ jobs:
       - name: ROI today
         run: boatrace roi today
 
-      - name: Publish results (dry-run)
+      - name: Publish results to note.com
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: boatrace publish results --dry-run
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+        run: boatrace publish results
 
       - name: Save data cache
         uses: actions/cache/save@v4

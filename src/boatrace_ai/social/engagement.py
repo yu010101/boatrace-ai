@@ -1,4 +1,21 @@
-"""X engagement strategy: quote repost + reply + like targeting."""
+"""X engagement strategy: quote repost + reply chain for initial growth.
+
+Based on X's public algorithm (twitter/the-algorithm, xAI/x-algorithm):
+
+Engagement weights (vs like = 0.5x baseline):
+  - Reply chain (相手が返信) = 75x  ← 最重要。会話を作れ
+  - Reply                    = 13.5x
+  - Quote repost             ≈ 25x  (新ツイート + リポスト信号)
+  - Repost                   = 1x
+  - Like                     = 0.5x
+  - Negative (block/mute)    = -74x  ← 絶対に回避
+
+Growth strategy for new accounts:
+  1. 引用RTで大手に通知 → リポスト返しで露出獲得
+  2. リプライで会話チェーン → 75x重み
+  3. Real Graph構築 → 毎日の継続エンゲージで相互認知
+  4. 投稿後30分が勝負 → 早期エンゲージがリーチを決定
+"""
 
 from __future__ import annotations
 
@@ -29,27 +46,59 @@ TARGET_ACCOUNTS = [
 PRIORITY_ORDER = {"S": 0, "A": 1, "B": 2}
 
 # ── Rate limits (daily) ─────────────────────────────────
+# Research: 10-20 quotes/day is safe for new accounts.
+# Start at 10, aggressive but below spam threshold.
 
-MAX_QUOTES_PER_DAY = 3
-MAX_REPLIES_PER_DAY = 20
-MAX_LIKES_PER_DAY = 30
-MAX_QUOTES_PER_HANDLE_PER_DAY = 1
+MAX_QUOTES_PER_DAY = 10
+MAX_REPLIES_PER_DAY = 30
+MAX_LIKES_PER_DAY = 50
+MAX_QUOTES_PER_HANDLE_PER_DAY = 3
 
-# ── Templates ────────────────────────────────────────────
+# ── Quote templates ──────────────────────────────────────
+# Strategy: 相手に"価値"を提供して、リポスト返し・返信を誘発する
+# - データや数字を出す（AIならではの差別化）
+# - 質問で返信を誘う（返信チェーン = 75x重み）
+# - 相手を持ち上げる（リポスト返しの動機）
 
-QUOTE_TEMPLATES = [
-    "水理AIでも同レース注目してました。データで見ても堅い一戦\n\n#競艇予想 #ボートレース",
-    "面白い着眼点。水理AIの分析でも注目ポイントが重なります\n\n#ボートレース #競艇予想",
-    "見事な的中! 同レース水理AIも分析してました\n\nお互い精度上げていきましょう #競艇",
-    "これは同意。データ分析でも裏付けが取れるレースですね\n\n#競艇AI予測 #ボートレース",
+QUOTE_TEMPLATES_HIT = [
+    # 相手が的中した時 → 称賛 + データ補足 + 質問（返信誘発）
+    "見事な的中! 水理AIのモデルでもこのレースは確信度上位でした。データが一致すると堅いですね\n\nちなみにモーター評価と展示タイムどちらを重視されてますか？",
+    "的中おめでとうございます。水理AIの分析でも1着候補一致してました\n\nこの読み、モーター重視ですか？ それとも選手の相性？ 気になります",
+    "お見事! このレース、水理AIでも推奨度Sランクでした。やっぱりデータが揃うと堅い\n\n同じレース注目してた方いると嬉しいですね",
 ]
 
-REPLY_TEMPLATES = [
-    "注目レースですね。モーターデータ的にも面白そうです",
-    "的中おめでとうございます! 難しいレースでしたね",
-    "同じく注目してました。データ分析でも堅い一戦に見えます",
-    "いつも参考にしてます。本日も注目レース多いですね",
+QUOTE_TEMPLATES_PREDICTION = [
+    # 相手が予想を出した時 → 同意 + AI視点の補足データ
+    "水理AIでも同レース注目。モデルの1着確率が突出してるので堅い一戦に見えます\n\nデータで裏付けが取れる予想は信頼できますね #競艇予想",
+    "同意です。水理AIの特徴量分析でもモーター2連率と展示タイムが揃ってるレース\n\nこういう根拠のある予想、参考になります #ボートレース",
+    "なるほど、この視点は面白い。水理AIだとモーター評価で別角度から見てますが、結論は同じでした\n\nやっぱり強い予想家の読みとAIが一致すると自信持てます",
 ]
+
+QUOTE_TEMPLATES_INFO = [
+    # 公式やレース情報系 → データ追加で価値提供
+    "水理AIのデータベースでもこのレース注目してます。ML予測で推奨度ランク付きの全場分析を毎朝配信中\n\n#ボートレース #競艇AI予測",
+    "このレース、水理AIの分析では注目度が高いです。データで見ると面白い一戦になりそう\n\n#競艇予想 #ボートレース",
+]
+
+# All quote templates combined for random selection
+QUOTE_TEMPLATES = QUOTE_TEMPLATES_HIT + QUOTE_TEMPLATES_PREDICTION + QUOTE_TEMPLATES_INFO
+
+REPLY_TEMPLATES_CONVERSATION = [
+    # 返信チェーン狙い: 質問で相手に返信させる（75x重み）
+    "注目レースですね! モーターデータ的にも面白そうです。ちなみに展示タイムはチェックされましたか？",
+    "さすがの読みですね。水理AIでも同じ結論でした。このレース、風の影響どう見てますか？",
+    "データ分析でも堅い一戦に見えます。3連単の買い目、何点くらいで絞ってますか？",
+    "同じく注目してました! インコースの信頼度が高いレースですよね。1号艇のモーターどう評価されてますか？",
+]
+
+REPLY_TEMPLATES_PRAISE = [
+    # 称賛系: 相手を持ち上げてリポスト返しを狙う
+    "的中おめでとうございます! いつも精度高くて参考にしてます",
+    "さすがです。このレースは難しかったのに見事な読みですね",
+    "いつも勉強になります。データ分析やってる身として、この精度は本当にすごい",
+]
+
+REPLY_TEMPLATES = REPLY_TEMPLATES_CONVERSATION + REPLY_TEMPLATES_PRAISE
 
 # ── Keyword filters ──────────────────────────────────────
 
@@ -59,10 +108,22 @@ BOATRACE_KEYWORDS = [
     "SG", "G1", "レース", "モーター", "展示",
 ]
 
+HIT_KEYWORDS = ["的中", "当たり", "プラス", "回収", "払戻"]
+PREDICTION_KEYWORDS = ["予想", "予測", "推奨", "注目", "狙い", "本命"]
+
 
 def _is_boatrace_related(text: str) -> bool:
     """Check if tweet text is boatrace-related."""
     return any(kw in text for kw in BOATRACE_KEYWORDS)
+
+
+def _classify_tweet(text: str) -> str:
+    """Classify tweet as 'hit', 'prediction', or 'info'."""
+    if any(kw in text for kw in HIT_KEYWORDS):
+        return "hit"
+    if any(kw in text for kw in PREDICTION_KEYWORDS):
+        return "prediction"
+    return "info"
 
 
 def get_sorted_targets(priority_filter: str | None = None) -> list[dict]:
@@ -95,14 +156,22 @@ def can_like(race_date: str) -> bool:
     return get_engagement_count(race_date, "like") < MAX_LIKES_PER_DAY
 
 
-def pick_quote_template() -> str:
-    """Pick a random quote template."""
-    return random.choice(QUOTE_TEMPLATES)
+def pick_quote_template(tweet_text: str = "") -> str:
+    """Pick a quote template matched to the tweet content."""
+    category = _classify_tweet(tweet_text)
+    if category == "hit":
+        return random.choice(QUOTE_TEMPLATES_HIT)
+    elif category == "prediction":
+        return random.choice(QUOTE_TEMPLATES_PREDICTION)
+    return random.choice(QUOTE_TEMPLATES_INFO)
 
 
-def pick_reply_template() -> str:
-    """Pick a random reply template."""
-    return random.choice(REPLY_TEMPLATES)
+def pick_reply_template(tweet_text: str = "") -> str:
+    """Pick a reply template. Prioritize conversation starters (75x weight)."""
+    # 70% conversation (question-based), 30% praise
+    if random.random() < 0.7:
+        return random.choice(REPLY_TEMPLATES_CONVERSATION)
+    return random.choice(REPLY_TEMPLATES_PRAISE)
 
 
 def scan_targets(
@@ -139,6 +208,10 @@ def execute_engagement(
 ) -> dict:
     """Execute auto engagement routine.
 
+    Strategy by timing:
+      morning: 全ターゲットに引用RT攻勢（予想ツイートへの引用RT）
+      evening: 全ターゲットに引用RT + 的中報告への称賛リプライ
+
     Args:
         timing: 'morning' or 'evening'
         dry_run: If True, don't actually post
@@ -151,18 +224,10 @@ def execute_engagement(
     race_date = date.today().isoformat()
     summary = {"quotes": 0, "replies": 0, "likes": 0, "skipped": 0}
 
-    # Morning: focus on S-priority targets with quote RTs for visibility
-    # Evening: broader engagement with replies (react to results/hit reports)
-    priority_filter = "S" if timing == "morning" else None
-
     scan_results = scan_targets()
     if not scan_results:
         log.info("No boatrace-related tweets found from targets")
         return summary
-
-    # Filter by priority for morning
-    if priority_filter:
-        scan_results = [r for r in scan_results if r["priority"] == priority_filter]
 
     for target_data in scan_results:
         handle = target_data["handle"]
@@ -171,27 +236,29 @@ def execute_engagement(
         if not tweets:
             continue
 
-        # Pick the most engaging tweet (highest metrics)
+        # Engage with multiple tweets per target (not just the best one)
+        for tweet in tweets:
+            # Like every relevant tweet (builds Real Graph)
+            if can_like(race_date):
+                liked = like_tweet(tweet["id"], dry_run=dry_run)
+                if liked or dry_run:
+                    if liked and not dry_run:
+                        save_engagement_log(
+                            "like", handle, race_date,
+                            target_tweet_id=tweet["id"],
+                        )
+                    summary["likes"] += 1
+
+        # Pick the best tweet for quote RT (highest engagement potential)
         best_tweet = max(
             tweets,
             key=lambda t: t.get("metrics", {}).get("like_count", 0)
             + t.get("metrics", {}).get("retweet_count", 0) * 2,
         )
 
-        # Like (always try first - low cost)
-        if can_like(race_date):
-            liked = like_tweet(best_tweet["id"], dry_run=dry_run)
-            if liked or dry_run:
-                if liked and not dry_run:
-                    save_engagement_log(
-                        "like", handle, race_date,
-                        target_tweet_id=best_tweet["id"],
-                    )
-                summary["likes"] += 1
-
-        # Quote RT (high value, limited)
+        # Quote RT: primary growth lever
         if can_quote(race_date, handle):
-            text = pick_quote_template()
+            text = pick_quote_template(best_tweet["text"])
             our_id = quote_repost(
                 best_tweet["id"], text, race_date, dry_run=dry_run,
             )
@@ -205,24 +272,23 @@ def execute_engagement(
                     )
                 summary["quotes"] += 1
 
-        # Reply (medium value, more allowed)
-        elif can_reply(race_date):
-            text = pick_reply_template()
+        # Reply: aim for conversation chain (75x weight)
+        if can_reply(race_date):
+            # Reply to a different tweet than the one we quoted
+            reply_tweet = tweets[1] if len(tweets) > 1 else best_tweet
+            text = pick_reply_template(reply_tweet["text"])
             reply_id = reply_to_tweet(
-                best_tweet["id"], text, dry_run=dry_run,
+                reply_tweet["id"], text, dry_run=dry_run,
             )
             if reply_id or dry_run:
                 if not dry_run:
                     save_engagement_log(
                         "reply", handle, race_date,
-                        target_tweet_id=best_tweet["id"],
+                        target_tweet_id=reply_tweet["id"],
                         our_tweet_id=reply_id,
                         tweet_text=text,
                     )
                 summary["replies"] += 1
-
-        else:
-            summary["skipped"] += 1
 
     return summary
 

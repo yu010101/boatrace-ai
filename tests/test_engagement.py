@@ -40,7 +40,6 @@ def test_get_sorted_targets():
 
     targets = get_sorted_targets()
     priorities = [t["priority"] for t in targets]
-    # S should come before A, A before B
     s_indices = [i for i, p in enumerate(priorities) if p == "S"]
     a_indices = [i for i, p in enumerate(priorities) if p == "A"]
     b_indices = [i for i, p in enumerate(priorities) if p == "B"]
@@ -61,6 +60,21 @@ def test_get_sorted_targets_filter():
 # ── Rate limiting ────────────────────────────────────────
 
 
+def test_rate_limits_aggressive():
+    """Rate limits should be aggressive enough for initial growth."""
+    from boatrace_ai.social.engagement import (
+        MAX_LIKES_PER_DAY,
+        MAX_QUOTES_PER_DAY,
+        MAX_QUOTES_PER_HANDLE_PER_DAY,
+        MAX_REPLIES_PER_DAY,
+    )
+
+    assert MAX_QUOTES_PER_DAY >= 10  # Research: 10-20 is safe
+    assert MAX_REPLIES_PER_DAY >= 20
+    assert MAX_LIKES_PER_DAY >= 30
+    assert MAX_QUOTES_PER_HANDLE_PER_DAY >= 2  # Multiple quotes per target OK
+
+
 def test_can_quote_under_limit():
     from boatrace_ai.social.engagement import can_quote
 
@@ -78,10 +92,12 @@ def test_can_quote_at_limit():
 
 
 def test_can_quote_per_handle_limit():
-    from boatrace_ai.social.engagement import can_quote
+    from boatrace_ai.social.engagement import MAX_QUOTES_PER_HANDLE_PER_DAY, can_quote
     from boatrace_ai.storage.database import save_engagement_log
 
-    save_engagement_log("quote", "ichimaru10kun", "2026-03-06")
+    for i in range(MAX_QUOTES_PER_HANDLE_PER_DAY):
+        save_engagement_log("quote", "ichimaru10kun", "2026-03-06")
+
     assert can_quote("2026-03-06", "ichimaru10kun") is False
     assert can_quote("2026-03-06", "kataru4649") is True
 
@@ -98,14 +114,55 @@ def test_can_like_under_limit():
     assert can_like("2026-03-06") is True
 
 
+# ── Tweet classification ─────────────────────────────────
+
+
+def test_classify_tweet():
+    from boatrace_ai.social.engagement import _classify_tweet
+
+    assert _classify_tweet("3連単的中! 払戻12,000円") == "hit"
+    assert _classify_tweet("明日の注目レース予想") == "prediction"
+    assert _classify_tweet("桐生のレース結果") == "info"
+
+
 # ── Templates ────────────────────────────────────────────
 
 
-def test_pick_quote_template():
-    from boatrace_ai.social.engagement import QUOTE_TEMPLATES, pick_quote_template
+def test_pick_quote_template_matches_content():
+    from boatrace_ai.social.engagement import (
+        QUOTE_TEMPLATES_HIT,
+        QUOTE_TEMPLATES_INFO,
+        QUOTE_TEMPLATES_PREDICTION,
+        pick_quote_template,
+    )
 
-    template = pick_quote_template()
-    assert template in QUOTE_TEMPLATES
+    hit_tmpl = pick_quote_template("3連単的中!")
+    assert hit_tmpl in QUOTE_TEMPLATES_HIT
+
+    pred_tmpl = pick_quote_template("明日の予想レース")
+    assert pred_tmpl in QUOTE_TEMPLATES_PREDICTION
+
+    info_tmpl = pick_quote_template("今日のレース情報")
+    assert info_tmpl in QUOTE_TEMPLATES_INFO
+
+
+def test_quote_templates_have_value():
+    """Quote templates should provide data/questions to trigger repost-back."""
+    from boatrace_ai.social.engagement import QUOTE_TEMPLATES
+
+    for tmpl in QUOTE_TEMPLATES:
+        # Should mention our brand or data
+        has_brand = "水理AI" in tmpl
+        has_data = any(w in tmpl for w in ["データ", "分析", "モデル", "確率", "特徴量", "推奨度", "ML"])
+        assert has_brand or has_data, f"Template lacks value-add: {tmpl[:50]}"
+
+
+def test_reply_templates_have_questions():
+    """Conversation templates should have questions to trigger reply chains (75x)."""
+    from boatrace_ai.social.engagement import REPLY_TEMPLATES_CONVERSATION
+
+    for tmpl in REPLY_TEMPLATES_CONVERSATION:
+        assert "？" in tmpl or "?" in tmpl, f"Conversation template lacks question: {tmpl[:50]}"
 
 
 def test_pick_reply_template():
@@ -236,7 +293,6 @@ def test_post_tweet_with_link_reply_dry_run():
         race_date="2026-03-06",
         dry_run=True,
     )
-    # dry_run returns None for both
     assert main_id is None
     assert reply_id is None
 
@@ -244,79 +300,90 @@ def test_post_tweet_with_link_reply_dry_run():
 # ── execute_engagement ───────────────────────────────────
 
 
+def _make_mock_tweets(n=2):
+    return [
+        {"id": str(100 + i), "text": "競艇予想です", "created_at": "", "metrics": {"like_count": 5 - i, "retweet_count": 1}}
+        for i in range(n)
+    ]
+
+
 def test_execute_engagement_dry_run_no_db_writes():
     """dry_run=True should NOT save engagement logs to DB."""
     from boatrace_ai.social.engagement import execute_engagement
     from boatrace_ai.storage.database import get_engagement_count
 
-    mock_tweets = [
-        {"id": "111", "text": "競艇予想です", "created_at": "", "metrics": {"like_count": 5, "retweet_count": 1}},
-    ]
-
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
         mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": mock_tweets},
+            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets()},
         ]
 
         summary = execute_engagement(timing="morning", dry_run=True)
 
-    # Should count actions in summary
     assert summary["likes"] + summary["quotes"] + summary["replies"] > 0
-    # But should NOT write to DB
-    assert get_engagement_count("2026-03-06", "like") == 0
-    assert get_engagement_count("2026-03-06", "quote") == 0
-    assert get_engagement_count("2026-03-06", "reply") == 0
+    today = date.today().isoformat()
+    assert get_engagement_count(today, "like") == 0
+    assert get_engagement_count(today, "quote") == 0
+    assert get_engagement_count(today, "reply") == 0
 
 
-def test_execute_engagement_morning_filters_s_priority():
-    """Morning timing should only engage with S-priority targets."""
+def test_execute_engagement_quotes_all_targets():
+    """Should quote RT every target, not just S-priority."""
     from boatrace_ai.social.engagement import execute_engagement
-
-    mock_tweets = [
-        {"id": "222", "text": "ボートレース予想", "created_at": "", "metrics": {"like_count": 3, "retweet_count": 0}},
-    ]
 
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
         mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": mock_tweets},
-            {"handle": "BoatMvhstPq", "name": "マーズ", "priority": "A", "tweets": mock_tweets},
-            {"handle": "boat_race_k", "name": "要", "priority": "B", "tweets": mock_tweets},
+            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets()},
+            {"handle": "BoatMvhstPq", "name": "マーズ", "priority": "A", "tweets": _make_mock_tweets()},
+            {"handle": "boat_race_k", "name": "要", "priority": "B", "tweets": _make_mock_tweets()},
         ]
 
         summary = execute_engagement(timing="morning", dry_run=True)
 
-    # Morning: only S-priority → 1 target processed
-    assert summary["likes"] == 1
+    # All 3 targets should get quoted
+    assert summary["quotes"] == 3
 
 
-def test_execute_engagement_evening_all_priorities():
-    """Evening timing should engage with all priority targets."""
+def test_execute_engagement_likes_all_tweets():
+    """Should like ALL relevant tweets per target (Real Graph building)."""
     from boatrace_ai.social.engagement import execute_engagement
-
-    mock_tweets = [
-        {"id": "333", "text": "競艇的中!", "created_at": "", "metrics": {"like_count": 1, "retweet_count": 0}},
-    ]
 
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
         mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": mock_tweets},
-            {"handle": "BoatMvhstPq", "name": "マーズ", "priority": "A", "tweets": mock_tweets},
-            {"handle": "boat_race_k", "name": "要", "priority": "B", "tweets": mock_tweets},
+            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets(3)},
         ]
 
-        summary = execute_engagement(timing="evening", dry_run=True)
+        summary = execute_engagement(timing="morning", dry_run=True)
 
-    # Evening: all priorities → 3 targets processed
+    # All 3 tweets should be liked (not just the best one)
     assert summary["likes"] == 3
+
+
+def test_execute_engagement_replies_for_chain():
+    """Should reply to targets to trigger 75x conversation chains."""
+    from boatrace_ai.social.engagement import execute_engagement
+
+    with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
+         patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
+         patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
+         patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
+        mock_scan.return_value = [
+            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets()},
+        ]
+
+        summary = execute_engagement(timing="morning", dry_run=True)
+
+    # Should both quote AND reply (not either/or)
+    assert summary["quotes"] >= 1
+    assert summary["replies"] >= 1
 
 
 def test_execute_engagement_api_failure_no_log():
@@ -324,20 +391,16 @@ def test_execute_engagement_api_failure_no_log():
     from boatrace_ai.social.engagement import execute_engagement
     from boatrace_ai.storage.database import get_engagement_count
 
-    mock_tweets = [
-        {"id": "444", "text": "競艇予想", "created_at": "", "metrics": {"like_count": 0, "retweet_count": 0}},
-    ]
-
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=False), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
         mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": mock_tweets},
+            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets()},
         ]
 
         execute_engagement(timing="evening", dry_run=False)
 
-    # API returned failure → no DB writes
-    assert get_engagement_count(date.today().isoformat(), "like") == 0
-    assert get_engagement_count(date.today().isoformat(), "quote") == 0
+    today = date.today().isoformat()
+    assert get_engagement_count(today, "like") == 0
+    assert get_engagement_count(today, "quote") == 0

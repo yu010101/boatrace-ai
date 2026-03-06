@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -47,6 +48,7 @@ from boatrace_ai.storage.database import (
     check_accuracy,
     get_accuracy_for_date,
     get_grades_for_date,
+    get_predictions_for_date,
     get_roi_daily,
     get_roi_stats,
     get_stats,
@@ -956,8 +958,20 @@ def publish_grades(date_str: str | None, dry_run: bool) -> None:
 
     display_grade_summary(grades)
 
+    # Load predictions to show ◎○△ in the free article
+    predictions_map: dict[tuple[int, int], list[int]] = {}
+    preds = get_predictions_for_date(target_str)
+    for p in preds:
+        try:
+            order = json.loads(p["predicted_order"]) if isinstance(p["predicted_order"], str) else p["predicted_order"]
+            predictions_map[(p["stadium_number"], p["race_number"])] = order
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+
     stats = get_stats()
-    title, html_body, hashtags = generate_grade_summary_article(target_str, grades, stats=stats)
+    title, html_body, hashtags = generate_grade_summary_article(
+        target_str, grades, stats=stats, predictions=predictions_map,
+    )
 
     if dry_run:
         display_article_preview(title, html_body)

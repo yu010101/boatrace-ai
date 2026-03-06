@@ -26,6 +26,58 @@ ABOUT_SUIRI_AI = (
 )
 
 
+def _venue_names_from_grades(grades: list[dict]) -> list[str]:
+    """Extract unique venue names from grade dicts."""
+    names = []
+    for g in grades:
+        name = STADIUMS.get(g["stadium_number"], "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _venue_names_from_records(records: list[AccuracyRecord]) -> list[str]:
+    """Extract unique venue names from accuracy records."""
+    names = []
+    for r in records:
+        name = STADIUMS.get(r["stadium_number"], "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _format_venue_list(names: list[str], max_show: int = 3) -> str:
+    """Format venue names for title: '桐生・戸田・江戸川など'."""
+    if not names:
+        return ""
+    shown = names[:max_show]
+    suffix = "など" if len(names) > max_show else ""
+    return "・".join(shown) + suffix
+
+
+def _format_date_short(race_date: str) -> str:
+    """Convert '2026-03-06' to '3/6'."""
+    parts = race_date.split("-")
+    if len(parts) == 3:
+        return f"{int(parts[1])}/{int(parts[2])}"
+    return race_date
+
+
+def _build_track_record(stats: dict) -> str:
+    """Build cumulative track record HTML for all articles."""
+    total = stats.get("total_races", 0)
+    if total == 0:
+        return ""
+    hit_1st_pct = int(stats["hit_1st_rate"] * 100)
+    hit_tri_pct = int(stats["hit_trifecta_rate"] * 100)
+    return (
+        "<h3>累計実績</h3>"
+        f"<p><strong>総予測: {total:,}レース | "
+        f"1着的中率: {hit_1st_pct}% | "
+        f"3連単的中率: {hit_tri_pct}%</strong></p>"
+    )
+
+
 def _build_hashtags(
     race: RaceProgram | None = None,
     *,
@@ -238,12 +290,16 @@ def _build_accuracy_html(
     hit_1st_pct = int(hit_1st / total * 100) if total else 0
     hit_tri_pct = int(hit_tri / total * 100) if total else 0
 
+    venue_names = _venue_names_from_records(records)
+    num_venues = len(venue_names)
+
     parts: list[str] = []
 
     # ── Summary (first sentence = meta description for SEO) ──
     parts.append("<h2>ボートレースAI予想 本日の結果</h2>")
     parts.append(
-        f"<p><strong>1着的中: {hit_1st}/{total} ({hit_1st_pct}%) | "
+        f"<p>全{num_venues}場{total}レースの予測結果。"
+        f"<strong>1着的中: {hit_1st}/{total} ({hit_1st_pct}%) | "
         f"3連単的中: {hit_tri}/{total} ({hit_tri_pct}%)</strong></p>"
     )
 
@@ -286,22 +342,16 @@ def _build_accuracy_html(
                 race_parts.append(f"{r['race_number']}R({marker})")
             parts.append(f"<p><strong>{venue}</strong>: {', '.join(race_parts)}</p>")
 
-    # ── Cumulative stats ──
-    parts.append("<h3>累計成績</h3>")
-    cum_total = stats["total_races"]
-    cum_1st_pct = int(stats["hit_1st_rate"] * 100)
-    cum_tri_pct = int(stats["hit_trifecta_rate"] * 100)
-    parts.append(
-        f"<p>総レース: {cum_total} | "
-        f"1着的中率: {cum_1st_pct}% | "
-        f"3連単的中率: {cum_tri_pct}%</p>"
-    )
+    # ── Cumulative track record ──
+    track_record = _build_track_record(stats)
+    if track_record:
+        parts.append(track_record)
 
     # ── Upsell ──
     parts.append("<h3>毎朝の予測を受け取るには</h3>")
     parts.append(
-        "<p>水理AIは毎朝7:30に推奨度ランクを無料公開、"
-        "Sランクレースの詳細予測は有料記事で配信中。"
+        "<p>水理AIは毎朝7:30に全レースの1着予測を無料公開。"
+        "Sランクレースの詳細買い目は有料記事で配信中。"
         "フォローすると最新記事の通知が届きます。</p>"
     )
 
@@ -378,13 +428,13 @@ def _build_accuracy_markdown(
             lines.append("")
 
     # Cumulative stats
-    lines.append("### 累計成績")
+    lines.append("### 累計実績")
     lines.append("")
     cum_total = stats["total_races"]
     cum_1st_pct = int(stats["hit_1st_rate"] * 100)
     cum_tri_pct = int(stats["hit_trifecta_rate"] * 100)
     lines.append(
-        f"総レース: {cum_total} | "
+        f"総予測: {cum_total:,}レース | "
         f"1着的中率: {cum_1st_pct}% | "
         f"3連単的中率: {cum_tri_pct}%"
     )
@@ -419,15 +469,17 @@ def generate_accuracy_report(
     hit_1st = sum(1 for r in records if r["hit_1st"])
     hit_1st_pct = int(hit_1st / total * 100) if total else 0
 
-    title = f"【的中率{hit_1st_pct}%】{race_date} ボートレース予想 結果｜AI的中レポート — 水理AI"
+    venue_names = _venue_names_from_records(records)
+    venue_str = _format_venue_list(venue_names)
+    num_venues = len(venue_names)
+    date_short = _format_date_short(race_date)
+
+    title = (
+        f"競艇AI予想 結果｜{venue_str}全{num_venues}場"
+        f"【的中率{hit_1st_pct}%】{date_short} — 水理AI"
+    )
     html_body = _build_accuracy_html(race_date, records, stats, roi_stats=roi_stats)
 
-    # Collect venue names for hashtags
-    venue_names = []
-    for r in records:
-        name = STADIUMS.get(r["stadium_number"], "")
-        if name and name not in venue_names:
-            venue_names.append(name)
     hashtags = _build_hashtags(venue_names=venue_names[:3])
 
     return title, html_body, hashtags
@@ -440,33 +492,46 @@ def generate_grade_summary_article(
     race_date: str,
     grades: list[dict],
     stats: dict | None = None,
+    predictions: dict[tuple[int, int], list[int]] | None = None,
 ) -> tuple[str, str, list[str]]:
-    """Generate a free article listing all race grades for the day.
+    """Generate a free article listing all race grades with 1st-place predictions.
 
     Args:
         race_date: The date (YYYY-MM-DD)
         grades: List of grade dicts from get_grades_for_date()
         stats: Optional cumulative stats from get_stats() for displaying hit rates
+        predictions: Optional mapping of (stadium, race_number) -> predicted_order
 
     Returns:
         Tuple of (title, html_body, hashtags)
     """
     s_count = sum(1 for g in grades if g["grade"] == "S")
     a_count = sum(1 for g in grades if g["grade"] == "A")
+    venue_names = _venue_names_from_grades(grades)
+    venue_str = _format_venue_list(venue_names)
+    num_venues = len(venue_names)
+    date_short = _format_date_short(race_date)
 
-    # Build title with hit rate if stats available
+    # Build title: competitor-beating format with venue names and free marker
     if stats and stats.get("total_races", 0) > 0:
         hit_1st_pct = int(stats["hit_1st_rate"] * 100)
-        title = f"【的中率{hit_1st_pct}%】{race_date} 競艇AI予想｜全場推奨度ランク — 水理AI"
+        title = (
+            f"競艇AI予想｜{venue_str}全{num_venues}場"
+            f"【全レース1着予測無料】的中率{hit_1st_pct}% {date_short} — 水理AI"
+        )
     else:
-        title = f"【AI予測】{race_date} 競艇AI予想｜全場推奨度ランク — 水理AI"
+        title = (
+            f"競艇AI予想｜{venue_str}全{num_venues}場"
+            f"【全レース1着予測無料】{date_short} — 水理AI"
+        )
 
     parts: list[str] = []
 
     # ── Summary (first sentence = meta description for SEO) ──
     parts.append("<h2>本日の競艇AI予想</h2>")
     parts.append(
-        f"<p>ボートレース全{len(grades)}レースをAIが分析。"
+        f"<p>{venue_str}全{num_venues}場{len(grades)}レースをAIが分析。"
+        f"全レースの1着予測を無料公開。"
         f"Sランク（高確信）{s_count}レース、Aランク{a_count}レースを検出しました。</p>"
     )
     if stats and stats.get("total_races", 0) > 0:
@@ -478,7 +543,6 @@ def generate_grade_summary_article(
         )
 
     # ── TOP3 注目レース ──
-    # Sort S-rank races by top1_prob descending, pick top 3
     s_races = sorted(
         [g for g in grades if g["grade"] == "S"],
         key=lambda g: g["top1_prob"],
@@ -491,12 +555,18 @@ def generate_grade_summary_article(
         for g in top3:
             stadium = STADIUMS.get(g["stadium_number"], str(g["stadium_number"]))
             prob_pct = int(g["top1_prob"] * 100)
+            # Include predicted 1st boat if available
+            pred_text = ""
+            if predictions:
+                order = predictions.get((g["stadium_number"], g["race_number"]))
+                if order:
+                    pred_text = f" ◎{order[0]}号艇"
             parts.append(
-                f"<p><strong>{stadium} {g['race_number']}R</strong>: "
+                f"<p><strong>{stadium} {g['race_number']}R{pred_text}</strong>: "
                 f"本命確率 {prob_pct}%（Sランク）</p>"
             )
 
-    # ── Grades grouped by venue ──
+    # ── All races with 1st-place predictions grouped by venue ──
     for rank in ["S", "A", "B", "C"]:
         rank_grades = [g for g in grades if g["grade"] == rank]
         if not rank_grades:
@@ -520,7 +590,17 @@ def generate_grade_summary_article(
             race_parts = []
             for g in sorted(venue_grades, key=lambda x: x["race_number"]):
                 prob_pct = int(g["top1_prob"] * 100)
-                race_parts.append(f"{g['race_number']}R({prob_pct}%)")
+                # Show ◎○△ predictions if available
+                if predictions:
+                    order = predictions.get((g["stadium_number"], g["race_number"]))
+                    if order and len(order) >= 3:
+                        race_parts.append(
+                            f"{g['race_number']}R ◎{order[0]} ○{order[1]} △{order[2]}({prob_pct}%)"
+                        )
+                    else:
+                        race_parts.append(f"{g['race_number']}R({prob_pct}%)")
+                else:
+                    race_parts.append(f"{g['race_number']}R({prob_pct}%)")
             parts.append(f"<p><strong>{venue}</strong>: {', '.join(race_parts)}</p>")
 
     # ── Upsell to paid articles ──
@@ -531,6 +611,12 @@ def generate_grade_summary_article(
             "水理AIのプロフィールから最新の有料記事をご確認ください。</p>"
         )
 
+    # ── Track record ──
+    if stats:
+        track_record = _build_track_record(stats)
+        if track_record:
+            parts.append(track_record)
+
     # Footer
     parts.append(ABOUT_SUIRI_AI)
     parts.append("<h3>注意事項</h3>")
@@ -538,12 +624,6 @@ def generate_grade_summary_article(
 
     html_body = "\n".join(parts)
 
-    # Collect venue names for hashtags
-    venue_names = []
-    for g in grades:
-        name = STADIUMS.get(g["stadium_number"], "")
-        if name and name not in venue_names:
-            venue_names.append(name)
     hashtags = _build_hashtags(venue_names=venue_names[:3])
 
     return title, html_body, hashtags

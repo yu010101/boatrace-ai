@@ -334,8 +334,8 @@ class TestAccuracyReportHtml:
 
     def test_contains_cumulative_stats(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "累計成績" in html
-        assert "総レース: 48" in html
+        assert "累計実績" in html
+        assert "総予測: 48" in html
 
     def test_uses_h2_not_h1(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
@@ -381,9 +381,9 @@ class TestGenerateAccuracyReport:
     def test_title_format(self) -> None:
         title, _, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "水理AI" in title
-        assert "2026-03-01" in title
+        assert "3/1" in title
         assert "的中率" in title
-        assert "ボートレース予想" in title
+        assert "競艇AI予想" in title
 
     def test_html_body_no_pay_tag(self) -> None:
         _, html, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())

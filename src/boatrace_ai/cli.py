@@ -930,7 +930,8 @@ def publish_grades(date_str: str | None, dry_run: bool) -> None:
 
     display_grade_summary(grades)
 
-    title, html_body, hashtags = generate_grade_summary_article(target_str, grades)
+    stats = get_stats()
+    title, html_body, hashtags = generate_grade_summary_article(target_str, grades, stats=stats)
 
     if dry_run:
         display_article_preview(title, html_body)

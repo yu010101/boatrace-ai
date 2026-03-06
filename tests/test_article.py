@@ -312,25 +312,24 @@ def _make_stats() -> dict:
 
 
 class TestAccuracyReportHtml:
-    def test_contains_date(self) -> None:
+    def test_contains_summary(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "2026-03-01" in html
+        assert "本日の結果サマリー" in html
 
     def test_contains_hit_rates(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "1着的中率: 66% (2/3)" in html
-        assert "3連単的中率: 33% (1/3)" in html
+        assert "1着的中: 2/3 (66%)" in html
+        assert "3連単的中: 1/3 (33%)" in html
 
-    def test_contains_hit_section(self) -> None:
+    def test_contains_highlight_section(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "的中レース ✅" in html
-        assert "✅ 桐生 1R" in html
+        assert "本日のハイライト" in html
+        assert "桐生 1R" in html
         assert "3連単的中!" in html
 
-    def test_contains_miss_section(self) -> None:
+    def test_contains_hit_list_by_venue(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "不的中レース" in html
-        assert "❌ 桐生 2R" in html
+        assert "的中レース一覧" in html
 
     def test_contains_cumulative_stats(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
@@ -352,19 +351,19 @@ class TestAccuracyReportHtml:
 
 
 class TestAccuracyReportMarkdown:
-    def test_contains_date(self) -> None:
+    def test_contains_summary(self) -> None:
         md = _build_accuracy_markdown("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "2026-03-01" in md
+        assert "本日の結果サマリー" in md
 
     def test_contains_hit_rates(self) -> None:
         md = _build_accuracy_markdown("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "1着的中率: 66% (2/3)" in md
-        assert "3連単的中率: 33% (1/3)" in md
+        assert "1着的中: 2/3 (66%)" in md
+        assert "3連単的中: 1/3 (33%)" in md
 
-    def test_contains_hit_and_miss_sections(self) -> None:
+    def test_contains_highlight_and_hit_list(self) -> None:
         md = _build_accuracy_markdown("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "的中レース ✅" in md
-        assert "不的中レース" in md
+        assert "本日のハイライト" in md
+        assert "的中レース一覧" in md
 
     def test_uses_h2_not_h1(self) -> None:
         md = _build_accuracy_markdown("2026-03-01", _make_accuracy_records(), _make_stats())
@@ -380,14 +379,16 @@ class TestGenerateAccuracyReport:
 
     def test_title_format(self) -> None:
         title, _, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "AI予測 結果レポート" in title
+        assert "水理AI 的中レポート" in title
         assert "2026-03-01" in title
+        assert "1着的中率" in title
 
     def test_html_body_no_pay_tag(self) -> None:
         _, html, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "<pay>" not in html
 
-    def test_hashtags_contain_report_tag(self) -> None:
+    def test_hashtags_contain_standard_tags(self) -> None:
         _, _, hashtags = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "的中レポート" in hashtags
         assert "AI予測" in hashtags
+        assert "水理AI" in hashtags
+        assert "競艇" in hashtags

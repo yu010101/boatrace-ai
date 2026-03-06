@@ -212,9 +212,9 @@ def generate_article(
     """
     stadium = STADIUMS.get(race.race_stadium_number, f"場{race.race_stadium_number}")
     if grade:
-        title = f"【推奨度{grade}】{stadium}競艇 第{race.race_number}R AI予測｜{race.race_date}"
+        title = f"【推奨度{grade}】{stadium}競艇 {race.race_number}R 予想｜AI予測 {race.race_date} — 水理AI"
     else:
-        title = f"{stadium}競艇 第{race.race_number}R AI予測｜{race.race_date}"
+        title = f"{stadium}競艇 {race.race_number}R 予想｜AI予測 {race.race_date} — 水理AI"
 
     html_body = _build_html(race, prediction, free=free, grade=grade)
     hashtags = _build_hashtags(race)
@@ -240,8 +240,8 @@ def _build_accuracy_html(
 
     parts: list[str] = []
 
-    # ── Summary ──
-    parts.append("<h2>本日の結果サマリー</h2>")
+    # ── Summary (first sentence = meta description for SEO) ──
+    parts.append("<h2>ボートレースAI予想 本日の結果</h2>")
     parts.append(
         f"<p><strong>1着的中: {hit_1st}/{total} ({hit_1st_pct}%) | "
         f"3連単的中: {hit_tri}/{total} ({hit_tri_pct}%)</strong></p>"
@@ -295,6 +295,14 @@ def _build_accuracy_html(
         f"<p>総レース: {cum_total} | "
         f"1着的中率: {cum_1st_pct}% | "
         f"3連単的中率: {cum_tri_pct}%</p>"
+    )
+
+    # ── Upsell ──
+    parts.append("<h3>毎朝の予測を受け取るには</h3>")
+    parts.append(
+        "<p>水理AIは毎朝7:30に推奨度ランクを無料公開、"
+        "Sランクレースの詳細予測は有料記事で配信中。"
+        "フォローすると最新記事の通知が届きます。</p>"
     )
 
     # Footer
@@ -411,7 +419,7 @@ def generate_accuracy_report(
     hit_1st = sum(1 for r in records if r["hit_1st"])
     hit_1st_pct = int(hit_1st / total * 100) if total else 0
 
-    title = f"【{race_date}結果】1着的中率 {hit_1st_pct}% — 水理AI 的中レポート"
+    title = f"【的中率{hit_1st_pct}%】{race_date} ボートレース予想 結果｜AI的中レポート — 水理AI"
     html_body = _build_accuracy_html(race_date, records, stats, roi_stats=roi_stats)
 
     # Collect venue names for hashtags
@@ -449,17 +457,17 @@ def generate_grade_summary_article(
     # Build title with hit rate if stats available
     if stats and stats.get("total_races", 0) > 0:
         hit_1st_pct = int(stats["hit_1st_rate"] * 100)
-        title = f"【的中率{hit_1st_pct}%】{race_date} 水理AI 推奨度ランク｜Sランク{s_count}レース"
+        title = f"【的中率{hit_1st_pct}%】{race_date} 競艇AI予想｜全場推奨度ランク — 水理AI"
     else:
-        title = f"【AI予測】{race_date} 水理AI 推奨度ランク｜Sランク{s_count}レース"
+        title = f"【AI予測】{race_date} 競艇AI予想｜全場推奨度ランク — 水理AI"
 
     parts: list[str] = []
 
-    # ── Summary ──
-    parts.append("<h2>本日の予測サマリー</h2>")
+    # ── Summary (first sentence = meta description for SEO) ──
+    parts.append("<h2>本日の競艇AI予想</h2>")
     parts.append(
-        f"<p>水理AIが全{len(grades)}レースをML分析。"
-        f"Sランク{s_count}レース、Aランク{a_count}レースを検出しました。</p>"
+        f"<p>ボートレース全{len(grades)}レースをAIが分析。"
+        f"Sランク（高確信）{s_count}レース、Aランク{a_count}レースを検出しました。</p>"
     )
     if stats and stats.get("total_races", 0) > 0:
         hit_1st_pct = int(stats["hit_1st_rate"] * 100)
@@ -514,6 +522,14 @@ def generate_grade_summary_article(
                 prob_pct = int(g["top1_prob"] * 100)
                 race_parts.append(f"{g['race_number']}R({prob_pct}%)")
             parts.append(f"<p><strong>{venue}</strong>: {', '.join(race_parts)}</p>")
+
+    # ── Upsell to paid articles ──
+    if s_count > 0:
+        parts.append("<h3>Sランク詳細予測（有料記事）</h3>")
+        parts.append(
+            "<p>Sランク各レースの買い目・AI詳細分析は有料記事で公開中。"
+            "水理AIのプロフィールから最新の有料記事をご確認ください。</p>"
+        )
 
     # Footer
     parts.append(ABOUT_SUIRI_AI)

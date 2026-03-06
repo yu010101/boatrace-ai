@@ -192,7 +192,8 @@ class TestGenerateArticle:
         prediction = _make_prediction()
         title, _, _ = generate_article(race, prediction)
         assert "桐生競艇" in title
-        assert "第1R" in title
+        assert "1R" in title
+        assert "水理AI" in title
         assert "AI予測" in title
         assert race.race_date in title
 
@@ -314,7 +315,7 @@ def _make_stats() -> dict:
 class TestAccuracyReportHtml:
     def test_contains_summary(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "本日の結果サマリー" in html
+        assert "ボートレースAI予想 本日の結果" in html
 
     def test_contains_hit_rates(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
@@ -379,9 +380,10 @@ class TestGenerateAccuracyReport:
 
     def test_title_format(self) -> None:
         title, _, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "水理AI 的中レポート" in title
+        assert "水理AI" in title
         assert "2026-03-01" in title
-        assert "1着的中率" in title
+        assert "的中率" in title
+        assert "ボートレース予想" in title
 
     def test_html_body_no_pay_tag(self) -> None:
         _, html, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())

@@ -959,7 +959,11 @@ async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) 
 @click.argument("date_str", default=None, required=False)
 @click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
 def publish_premium(date_str: str | None, dry_run: bool) -> None:
-    """Sランクのみの有料記事を投稿"""
+    """Sランクのみの有料記事を自動投稿"""
+    asyncio.run(_publish_premium(date_str, dry_run))
+
+
+async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
     target_str = date_str or date.today().isoformat()
 
     grades = get_grades_for_date(target_str)
@@ -969,16 +973,84 @@ def publish_premium(date_str: str | None, dry_run: bool) -> None:
         display_error(f"{target_str}のSランクレースがありません。")
         return
 
-    console.print(f"\n[bold]Sランク: {len(s_grades)} レース[/bold]")
-    for g in s_grades:
-        stadium = STADIUMS.get(g["stadium_number"], str(g["stadium_number"]))
-        console.print(f"  {stadium} {g['race_number']}R — {g['reason']}")
-
-    if dry_run:
-        console.print("[yellow]--dry-run: 投稿をスキップしました[/yellow]")
+    # Fetch programs for S-rank races
+    try:
+        d = _parse_date(target_str)
+        with console.status("[bold green]出走表を取得中..."):
+            programs = await fetch_programs(d)
+    except Exception as e:
+        display_error(f"出走表の取得に失敗: {e}")
         return
 
-    console.print("[dim]Sランク有料記事は publish today/race で個別に投稿してください。[/dim]")
+    # Match S-rank grades to programs
+    s_keys = {(g["stadium_number"], g["race_number"]) for g in s_grades}
+    races = [
+        r for r in programs
+        if (r.race_stadium_number, r.race_number) in s_keys
+    ]
+
+    if not races:
+        display_error("Sランクに対応するレースが見つかりません。")
+        return
+
+    total = len(races)
+    console.print(f"\n[bold]Sランク有料記事: {total} レース（¥{config.NOTE_ARTICLE_PRICE}）[/bold]")
+
+    # Prepare note client
+    note_client: NoteClient | None = None
+    if not dry_run:
+        try:
+            note_client = NoteClient()
+            with console.status("[bold green]note.com ログイン確認中..."):
+                await note_client.ensure_logged_in()
+        except Exception as e:
+            display_error(f"note.com ログインに失敗: {e}")
+            return
+
+    success = 0
+    failed = 0
+
+    for i, race in enumerate(races, 1):
+        s = STADIUMS.get(race.race_stadium_number, "?")
+        label = f"{s} {race.race_number}R"
+
+        display_progress(i, total, f"{label} 予測中...")
+        odds_data = None
+        if config.MODEL_PATH.exists():
+            odds_data = await _fetch_odds_safe(race)
+        try:
+            prediction = await predict_race_auto(race, mode="ml", odds_data=odds_data)
+        except Exception as e:
+            display_error(f"{label} の予測に失敗: {e}")
+            failed += 1
+            continue
+
+        title, html_body, hashtags = generate_article(
+            race, prediction, grade="S",
+        )
+
+        if dry_run:
+            md_text = _build_markdown(race, prediction, grade="S")
+            display_article_preview(title, md_text)
+            success += 1
+            continue
+
+        display_publish_progress(i, total, title)
+        try:
+            result = await note_client.create_and_publish(
+                title, html_body, price=config.NOTE_ARTICLE_PRICE, hashtags=hashtags
+            )
+            url = result.get("note_url", "")
+            display_publish_result(title, url, config.NOTE_ARTICLE_PRICE)
+            success += 1
+        except Exception as e:
+            display_error(f"{label} の投稿に失敗: {e}")
+            failed += 1
+
+        if i < total:
+            await asyncio.sleep(config.NOTE_PUBLISH_INTERVAL)
+
+    display_publish_summary(success, failed, total)
 
 
 # ── backtest ─────────────────────────────────────────────

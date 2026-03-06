@@ -53,6 +53,8 @@ jobs:
         run: mkdir -p .boatrace-data
 
       - name: Predict today
+        env:
+          BOATRACE_SKIP_ODDS: '1'
         run: boatrace predict today --mode ml
 
       - name: Publish grades to note.com

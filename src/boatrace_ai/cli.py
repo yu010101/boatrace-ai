@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import date, datetime, timedelta
 
 import click
@@ -162,6 +163,8 @@ def predict_today(stadium: int | None, dry_run: bool, mode: str) -> None:
 
 async def _fetch_odds_safe(race):
     """Fetch odds for a race, returning None on failure (graceful degradation)."""
+    if os.environ.get("BOATRACE_SKIP_ODDS"):
+        return None
     try:
         from boatrace_ai.data.odds import fetch_odds
 

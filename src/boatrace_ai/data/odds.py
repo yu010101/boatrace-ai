@@ -54,6 +54,17 @@ def _ensure_bs4():
         )
 
 
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+}
+
+
 async def _fetch_html(url: str, client: httpx.AsyncClient) -> str | None:
     """Fetch HTML from a URL. Returns None on failure."""
     try:
@@ -466,7 +477,7 @@ async def fetch_odds(
 
     result = OddsData(fetched_at=datetime.now().isoformat())
 
-    async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT, headers=_HEADERS) as client:
         # Fetch win + place odds (single page)
         html = await _fetch_html(urls["win"], client)
         if html:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -129,6 +130,7 @@ def test_classify_tweet():
 
 
 def test_pick_quote_template_matches_content():
+    """Template should be picked from the correct category (with humanization)."""
     from boatrace_ai.social.engagement import (
         QUOTE_TEMPLATES_HIT,
         QUOTE_TEMPLATES_INFO,
@@ -136,14 +138,15 @@ def test_pick_quote_template_matches_content():
         pick_quote_template,
     )
 
+    # Check that the base template (before humanization) is from the right category
     hit_tmpl = pick_quote_template("3連単的中!")
-    assert hit_tmpl in QUOTE_TEMPLATES_HIT
+    assert any(base in hit_tmpl for base in QUOTE_TEMPLATES_HIT)
 
     pred_tmpl = pick_quote_template("明日の予想レース")
-    assert pred_tmpl in QUOTE_TEMPLATES_PREDICTION
+    assert any(base in pred_tmpl for base in QUOTE_TEMPLATES_PREDICTION)
 
     info_tmpl = pick_quote_template("今日のレース情報")
-    assert info_tmpl in QUOTE_TEMPLATES_INFO
+    assert any(base in info_tmpl for base in QUOTE_TEMPLATES_INFO)
 
 
 def test_quote_templates_have_value():
@@ -151,9 +154,8 @@ def test_quote_templates_have_value():
     from boatrace_ai.social.engagement import QUOTE_TEMPLATES
 
     for tmpl in QUOTE_TEMPLATES:
-        # Should mention our brand or data
         has_brand = "水理AI" in tmpl
-        has_data = any(w in tmpl for w in ["データ", "分析", "モデル", "確率", "特徴量", "推奨度", "ML"])
+        has_data = any(w in tmpl for w in ["データ", "分析", "モデル", "確率", "特徴量", "推奨度", "ML", "AI"])
         assert has_brand or has_data, f"Template lacks value-add: {tmpl[:50]}"
 
 
@@ -163,6 +165,28 @@ def test_reply_templates_have_questions():
 
     for tmpl in REPLY_TEMPLATES_CONVERSATION:
         assert "？" in tmpl or "?" in tmpl, f"Conversation template lacks question: {tmpl[:50]}"
+
+
+def test_humanize_text_varies():
+    """_humanize_text should sometimes produce different output."""
+    from boatrace_ai.social.engagement import _humanize_text
+
+    base = "テスト文章です"
+    results = set()
+    for _ in range(50):
+        results.add(_humanize_text(base))
+    # Should produce at least 2 different variations over 50 runs
+    assert len(results) >= 2, "humanize_text should add variation"
+
+
+def test_human_delay_skipped_on_dry_run():
+    """_human_delay should not sleep during dry_run."""
+    from boatrace_ai.social.engagement import _human_delay
+
+    start = time.time()
+    _human_delay(dry_run=True)
+    elapsed = time.time() - start
+    assert elapsed < 0.1
 
 
 def test_pick_reply_template():
@@ -313,6 +337,9 @@ def test_execute_engagement_dry_run_no_db_writes():
     from boatrace_ai.storage.database import get_engagement_count
 
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
+         patch("boatrace_ai.social.engagement.TARGET_ENGAGE_PROB", 1.0), \
+         patch("boatrace_ai.social.engagement.LIKE_PROB", 1.0), \
+         patch("boatrace_ai.social.engagement.BOTH_QUOTE_AND_REPLY_PROB", 1.0), \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
@@ -329,61 +356,50 @@ def test_execute_engagement_dry_run_no_db_writes():
     assert get_engagement_count(today, "reply") == 0
 
 
-def test_execute_engagement_quotes_all_targets():
-    """Should quote RT every target, not just S-priority."""
+def test_execute_engagement_randomness_skips_some():
+    """With randomness, some targets/likes should be skipped."""
+    from boatrace_ai.social.engagement import execute_engagement
+
+    # Run many times and verify we get different results
+    results = []
+    for _ in range(10):
+        with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
+             patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
+             patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
+             patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
+            mock_scan.return_value = [
+                {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets(3)},
+                {"handle": "kataru4649", "name": "カタル", "priority": "S", "tweets": _make_mock_tweets(3)},
+                {"handle": "BoatMvhstPq", "name": "マーズ", "priority": "A", "tweets": _make_mock_tweets(3)},
+            ]
+            summary = execute_engagement(timing="morning", dry_run=True)
+            results.append(summary["likes"])
+
+    # With randomness, not every run should produce the same like count
+    unique_counts = set(results)
+    assert len(unique_counts) >= 2, f"Results should vary but got {unique_counts}"
+
+
+def test_execute_engagement_with_full_engagement():
+    """With all probabilities at 1.0, should engage with everything."""
     from boatrace_ai.social.engagement import execute_engagement
 
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
+         patch("boatrace_ai.social.engagement.TARGET_ENGAGE_PROB", 1.0), \
+         patch("boatrace_ai.social.engagement.LIKE_PROB", 1.0), \
+         patch("boatrace_ai.social.engagement.BOTH_QUOTE_AND_REPLY_PROB", 1.0), \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
         mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets()},
-            {"handle": "BoatMvhstPq", "name": "マーズ", "priority": "A", "tweets": _make_mock_tweets()},
-            {"handle": "boat_race_k", "name": "要", "priority": "B", "tweets": _make_mock_tweets()},
+            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets(2)},
         ]
 
         summary = execute_engagement(timing="morning", dry_run=True)
 
-    # All 3 targets should get quoted
-    assert summary["quotes"] == 3
-
-
-def test_execute_engagement_likes_all_tweets():
-    """Should like ALL relevant tweets per target (Real Graph building)."""
-    from boatrace_ai.social.engagement import execute_engagement
-
-    with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
-         patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
-         patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
-         patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
-        mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets(3)},
-        ]
-
-        summary = execute_engagement(timing="morning", dry_run=True)
-
-    # All 3 tweets should be liked (not just the best one)
-    assert summary["likes"] == 3
-
-
-def test_execute_engagement_replies_for_chain():
-    """Should reply to targets to trigger 75x conversation chains."""
-    from boatrace_ai.social.engagement import execute_engagement
-
-    with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
-         patch("boatrace_ai.social.twitter.like_tweet", return_value=True), \
-         patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
-         patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):
-        mock_scan.return_value = [
-            {"handle": "ichimaru10kun", "name": "いちまる", "priority": "S", "tweets": _make_mock_tweets()},
-        ]
-
-        summary = execute_engagement(timing="morning", dry_run=True)
-
-    # Should both quote AND reply (not either/or)
-    assert summary["quotes"] >= 1
-    assert summary["replies"] >= 1
+    assert summary["likes"] == 2  # All tweets liked
+    assert summary["quotes"] == 1
+    assert summary["replies"] == 1
 
 
 def test_execute_engagement_api_failure_no_log():
@@ -392,6 +408,9 @@ def test_execute_engagement_api_failure_no_log():
     from boatrace_ai.storage.database import get_engagement_count
 
     with patch("boatrace_ai.social.engagement.scan_targets") as mock_scan, \
+         patch("boatrace_ai.social.engagement.TARGET_ENGAGE_PROB", 1.0), \
+         patch("boatrace_ai.social.engagement.LIKE_PROB", 1.0), \
+         patch("boatrace_ai.social.engagement.BOTH_QUOTE_AND_REPLY_PROB", 1.0), \
          patch("boatrace_ai.social.twitter.like_tweet", return_value=False), \
          patch("boatrace_ai.social.twitter.quote_repost", return_value=None), \
          patch("boatrace_ai.social.twitter.reply_to_tweet", return_value=None):

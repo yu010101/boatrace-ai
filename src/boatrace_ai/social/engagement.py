@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from datetime import date
 
 from boatrace_ai.storage.database import (
@@ -46,56 +47,72 @@ TARGET_ACCOUNTS = [
 PRIORITY_ORDER = {"S": 0, "A": 1, "B": 2}
 
 # ── Rate limits (daily) ─────────────────────────────────
-# Research: 10-20 quotes/day is safe for new accounts.
-# Start at 10, aggressive but below spam threshold.
 
 MAX_QUOTES_PER_DAY = 10
 MAX_REPLIES_PER_DAY = 30
 MAX_LIKES_PER_DAY = 50
 MAX_QUOTES_PER_HANDLE_PER_DAY = 3
 
+# ── Humanization parameters ──────────────────────────────
+
+# Probability of engaging with each target (humans skip some)
+TARGET_ENGAGE_PROB = 0.75
+# Probability of liking each individual tweet
+LIKE_PROB = 0.7
+# Probability of doing both quote+reply (vs just one)
+BOTH_QUOTE_AND_REPLY_PROB = 0.5
+# Action delay range in seconds (human-like pauses)
+ACTION_DELAY_MIN = 2
+ACTION_DELAY_MAX = 8
+
+# ── Text variation ───────────────────────────────────────
+
+_FILLERS = ["", "なるほど、", "おお、", "これは、"]
+_TRAIL_VARIATIONS = [
+    "", " 注目してます", " 楽しみです", " 気になりますね",
+]
+_EMOJI_POOL = ["", "", "", "", " ✨", " 🎯", " 🔥", " 💡", " 📊"]
+
 # ── Quote templates ──────────────────────────────────────
-# Strategy: 相手に"価値"を提供して、リポスト返し・返信を誘発する
-# - データや数字を出す（AIならではの差別化）
-# - 質問で返信を誘う（返信チェーン = 75x重み）
-# - 相手を持ち上げる（リポスト返しの動機）
 
 QUOTE_TEMPLATES_HIT = [
-    # 相手が的中した時 → 称賛 + データ補足 + 質問（返信誘発）
     "見事な的中! 水理AIのモデルでもこのレースは確信度上位でした。データが一致すると堅いですね\n\nちなみにモーター評価と展示タイムどちらを重視されてますか？",
     "的中おめでとうございます。水理AIの分析でも1着候補一致してました\n\nこの読み、モーター重視ですか？ それとも選手の相性？ 気になります",
     "お見事! このレース、水理AIでも推奨度Sランクでした。やっぱりデータが揃うと堅い\n\n同じレース注目してた方いると嬉しいですね",
+    "的中すごい。水理AIでもこのレースは信頼度高かったです\n\n展示の段階で見えてた感じですか？",
+    "ナイス的中! 水理AIでもモデル確率高めのレースでした\n\nやっぱり堅いレースは人もAIも見解一致しますね",
 ]
 
 QUOTE_TEMPLATES_PREDICTION = [
-    # 相手が予想を出した時 → 同意 + AI視点の補足データ
     "水理AIでも同レース注目。モデルの1着確率が突出してるので堅い一戦に見えます\n\nデータで裏付けが取れる予想は信頼できますね #競艇予想",
     "同意です。水理AIの特徴量分析でもモーター2連率と展示タイムが揃ってるレース\n\nこういう根拠のある予想、参考になります #ボートレース",
     "なるほど、この視点は面白い。水理AIだとモーター評価で別角度から見てますが、結論は同じでした\n\nやっぱり強い予想家の読みとAIが一致すると自信持てます",
+    "水理AIのデータでも同じ結論。このレースは条件揃ってますね\n\nこういう堅いレースを見極めるの大事ですよね #競艇予想",
+    "AI視点でも注目のレース。モーターと選手の相性がいい組み合わせですね\n\n予想の軸がしっかりしてて参考になります",
 ]
 
 QUOTE_TEMPLATES_INFO = [
-    # 公式やレース情報系 → データ追加で価値提供
     "水理AIのデータベースでもこのレース注目してます。ML予測で推奨度ランク付きの全場分析を毎朝配信中\n\n#ボートレース #競艇AI予測",
     "このレース、水理AIの分析では注目度が高いです。データで見ると面白い一戦になりそう\n\n#競艇予想 #ボートレース",
+    "水理AIでもチェックしてました。データ的に見どころ多いレースですね\n\n#ボートレース",
 ]
 
-# All quote templates combined for random selection
 QUOTE_TEMPLATES = QUOTE_TEMPLATES_HIT + QUOTE_TEMPLATES_PREDICTION + QUOTE_TEMPLATES_INFO
 
 REPLY_TEMPLATES_CONVERSATION = [
-    # 返信チェーン狙い: 質問で相手に返信させる（75x重み）
     "注目レースですね! モーターデータ的にも面白そうです。ちなみに展示タイムはチェックされましたか？",
     "さすがの読みですね。水理AIでも同じ結論でした。このレース、風の影響どう見てますか？",
     "データ分析でも堅い一戦に見えます。3連単の買い目、何点くらいで絞ってますか？",
     "同じく注目してました! インコースの信頼度が高いレースですよね。1号艇のモーターどう評価されてますか？",
+    "このレースいいですよね。水理AIでも推奨度高めでした。2着争いが鍵だと思うんですけどどう見てますか？",
+    "面白い予想ですね。水理AIだと少し違う結論なんですが、展示見てから最終判断する感じですか？",
 ]
 
 REPLY_TEMPLATES_PRAISE = [
-    # 称賛系: 相手を持ち上げてリポスト返しを狙う
     "的中おめでとうございます! いつも精度高くて参考にしてます",
     "さすがです。このレースは難しかったのに見事な読みですね",
     "いつも勉強になります。データ分析やってる身として、この精度は本当にすごい",
+    "見事です! 毎日チェックしてますがほんと安定してますね",
 ]
 
 REPLY_TEMPLATES = REPLY_TEMPLATES_CONVERSATION + REPLY_TEMPLATES_PRAISE
@@ -124,6 +141,42 @@ def _classify_tweet(text: str) -> str:
     if any(kw in text for kw in PREDICTION_KEYWORDS):
         return "prediction"
     return "info"
+
+
+def _humanize_text(text: str) -> str:
+    """Add subtle randomness to text so it doesn't look automated.
+
+    - Randomly prepend a filler word
+    - Randomly append a trailing phrase
+    - Small chance of adding an emoji
+    """
+    # 30% chance to prepend a filler
+    if random.random() < 0.3:
+        filler = random.choice(_FILLERS)
+        if filler:
+            text = filler + text
+
+    # 20% chance to append a trailing variation
+    if random.random() < 0.2:
+        trail = random.choice(_TRAIL_VARIATIONS)
+        if trail:
+            text = text.rstrip() + trail
+
+    # 15% chance to add an emoji
+    if random.random() < 0.15:
+        emoji = random.choice(_EMOJI_POOL)
+        if emoji:
+            text = text.rstrip() + emoji
+
+    return text
+
+
+def _human_delay(dry_run: bool = False) -> None:
+    """Random delay between actions to appear human."""
+    if dry_run:
+        return
+    delay = random.uniform(ACTION_DELAY_MIN, ACTION_DELAY_MAX)
+    time.sleep(delay)
 
 
 def get_sorted_targets(priority_filter: str | None = None) -> list[dict]:
@@ -157,21 +210,25 @@ def can_like(race_date: str) -> bool:
 
 
 def pick_quote_template(tweet_text: str = "") -> str:
-    """Pick a quote template matched to the tweet content."""
+    """Pick a quote template matched to the tweet content, with humanization."""
     category = _classify_tweet(tweet_text)
     if category == "hit":
-        return random.choice(QUOTE_TEMPLATES_HIT)
+        text = random.choice(QUOTE_TEMPLATES_HIT)
     elif category == "prediction":
-        return random.choice(QUOTE_TEMPLATES_PREDICTION)
-    return random.choice(QUOTE_TEMPLATES_INFO)
+        text = random.choice(QUOTE_TEMPLATES_PREDICTION)
+    else:
+        text = random.choice(QUOTE_TEMPLATES_INFO)
+    return _humanize_text(text)
 
 
 def pick_reply_template(tweet_text: str = "") -> str:
     """Pick a reply template. Prioritize conversation starters (75x weight)."""
     # 70% conversation (question-based), 30% praise
     if random.random() < 0.7:
-        return random.choice(REPLY_TEMPLATES_CONVERSATION)
-    return random.choice(REPLY_TEMPLATES_PRAISE)
+        text = random.choice(REPLY_TEMPLATES_CONVERSATION)
+    else:
+        text = random.choice(REPLY_TEMPLATES_PRAISE)
+    return _humanize_text(text)
 
 
 def scan_targets(
@@ -206,11 +263,15 @@ def execute_engagement(
     timing: str = "morning",
     dry_run: bool = False,
 ) -> dict:
-    """Execute auto engagement routine.
+    """Execute auto engagement routine with human-like randomness.
 
-    Strategy by timing:
-      morning: 全ターゲットに引用RT攻勢（予想ツイートへの引用RT）
-      evening: 全ターゲットに引用RT + 的中報告への称賛リプライ
+    Humanization:
+      - Target order is shuffled each run
+      - Each target has a random chance of being skipped
+      - Each like has a random chance of being skipped
+      - Quote RT and reply are not always paired
+      - Random delays between actions
+      - Template text has subtle variations
 
     Args:
         timing: 'morning' or 'evening'
@@ -229,6 +290,9 @@ def execute_engagement(
         log.info("No boatrace-related tweets found from targets")
         return summary
 
+    # Shuffle target order (humans don't always engage in the same order)
+    random.shuffle(scan_results)
+
     for target_data in scan_results:
         handle = target_data["handle"]
         tweets = target_data["tweets"]
@@ -236,28 +300,53 @@ def execute_engagement(
         if not tweets:
             continue
 
-        # Engage with multiple tweets per target (not just the best one)
-        for tweet in tweets:
-            # Like every relevant tweet (builds Real Graph)
-            if can_like(race_date):
-                liked = like_tweet(tweet["id"], dry_run=dry_run)
-                if liked or dry_run:
-                    if liked and not dry_run:
-                        save_engagement_log(
-                            "like", handle, race_date,
-                            target_tweet_id=tweet["id"],
-                        )
-                    summary["likes"] += 1
+        # Random chance to skip this target entirely
+        if random.random() > TARGET_ENGAGE_PROB:
+            log.info("Randomly skipping target @%s this run", handle)
+            summary["skipped"] += 1
+            continue
 
-        # Pick the best tweet for quote RT (highest engagement potential)
+        # Like tweets randomly (not all of them)
+        shuffled_tweets = list(tweets)
+        random.shuffle(shuffled_tweets)
+        for tweet in shuffled_tweets:
+            if not can_like(race_date):
+                break
+            # Random chance to skip this particular like
+            if random.random() > LIKE_PROB:
+                continue
+            _human_delay(dry_run)
+            liked = like_tweet(tweet["id"], dry_run=dry_run)
+            if liked or dry_run:
+                if liked and not dry_run:
+                    save_engagement_log(
+                        "like", handle, race_date,
+                        target_tweet_id=tweet["id"],
+                    )
+                summary["likes"] += 1
+
+        # Pick the best tweet for quote RT
         best_tweet = max(
             tweets,
             key=lambda t: t.get("metrics", {}).get("like_count", 0)
             + t.get("metrics", {}).get("retweet_count", 0) * 2,
         )
 
-        # Quote RT: primary growth lever
-        if can_quote(race_date, handle):
+        # Decide: quote only, reply only, or both
+        do_quote = can_quote(race_date, handle)
+        do_reply = can_reply(race_date)
+        do_both = random.random() < BOTH_QUOTE_AND_REPLY_PROB
+
+        if do_quote and do_reply and not do_both:
+            # Pick one at random
+            if random.random() < 0.6:  # Slight bias toward quote RT (higher value)
+                do_reply = False
+            else:
+                do_quote = False
+
+        # Quote RT
+        if do_quote:
+            _human_delay(dry_run)
             text = pick_quote_template(best_tweet["text"])
             our_id = quote_repost(
                 best_tweet["id"], text, race_date, dry_run=dry_run,
@@ -272,9 +361,9 @@ def execute_engagement(
                     )
                 summary["quotes"] += 1
 
-        # Reply: aim for conversation chain (75x weight)
-        if can_reply(race_date):
-            # Reply to a different tweet than the one we quoted
+        # Reply (to a different tweet if possible)
+        if do_reply:
+            _human_delay(dry_run)
             reply_tweet = tweets[1] if len(tweets) > 1 else best_tweet
             text = pick_reply_template(reply_tweet["text"])
             reply_id = reply_to_tweet(

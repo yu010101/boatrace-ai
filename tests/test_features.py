@@ -151,4 +151,4 @@ def test_extract_features_stadium_and_grade(programs_json: dict) -> None:
 
 
 def test_feature_names_count() -> None:
-    assert len(FEATURE_NAMES) == 27
+    assert len(FEATURE_NAMES) == 29

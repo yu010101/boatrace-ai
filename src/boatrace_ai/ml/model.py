@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,8 @@ log = logging.getLogger(__name__)
 # Module-level cache
 _cached_model = None
 _cached_mtime: float = 0.0
+_cached_calibrator = None
+_cached_calibrator_mtime: float = 0.0
 
 
 def _check_lightgbm() -> None:
@@ -65,24 +68,63 @@ def load_model_meta(meta_path: Path | None = None) -> dict:
     return json.loads(path.read_text())
 
 
+def load_calibrator(model_path: Path | None = None):
+    """Load probability calibrator with mtime-based caching.
+
+    Returns an IsotonicRegression instance or None if not available.
+    """
+    global _cached_calibrator, _cached_calibrator_mtime
+
+    path = (model_path or config.MODEL_PATH).with_suffix(".calibrator.pkl")
+    if not path.exists():
+        return None
+
+    current_mtime = path.stat().st_mtime
+    if _cached_calibrator is not None and _cached_calibrator_mtime == current_mtime:
+        return _cached_calibrator
+
+    log.info("Loading calibrator from %s", path)
+    _cached_calibrator = pickle.loads(path.read_bytes())
+    _cached_calibrator_mtime = current_mtime
+    return _cached_calibrator
+
+
 def _predict_raw(
     race: RaceProgram, model_path: Path | None = None
 ) -> tuple[list[int], dict[int, float]]:
     """Internal: compute predicted_order and normalized probabilities.
 
+    Uses softmax on raw LambdaRank scores, then applies isotonic
+    calibration if a calibrator is available.
+
     Returns:
         (predicted_order, norm_probs) where norm_probs maps boat_number -> probability.
     """
+    import numpy as np
+
     _check_lightgbm()
 
     model = load_model(model_path)
+    calibrator = load_calibrator(model_path)
 
     # Extract features
     feature_rows = extract_features(race)
     feature_matrix = [[row[name] for name in FEATURE_NAMES] for row in feature_rows]
 
-    # Predict P(1st place) for each boat
-    probs = model.predict(feature_matrix)
+    # Get raw scores from LambdaRank model
+    raw_scores = np.array(model.predict(feature_matrix))
+
+    # Convert raw scores to probabilities via softmax
+    exp_scores = np.exp(raw_scores - raw_scores.max())
+    probs = exp_scores / exp_scores.sum()
+
+    # Apply calibration if available
+    if calibrator is not None:
+        probs = calibrator.predict(probs)
+        # Re-normalize after calibration
+        total = probs.sum()
+        if total > 0:
+            probs = probs / total
 
     # Build boat_number -> probability mapping
     boat_probs: list[tuple[int, float]] = []
@@ -94,12 +136,8 @@ def _predict_raw(
     boat_probs.sort(key=lambda x: x[1], reverse=True)
     predicted_order = [bp[0] for bp in boat_probs]
 
-    # Normalize probabilities to sum to 1
-    total_prob = sum(p for _, p in boat_probs)
-    if total_prob > 0:
-        norm_probs = {bn: p / total_prob for bn, p in boat_probs}
-    else:
-        norm_probs = {bn: 1.0 / 6 for bn, _ in boat_probs}
+    # Normalized probability map
+    norm_probs = {bn: p for bn, p in boat_probs}
 
     return predicted_order, norm_probs
 
@@ -112,7 +150,7 @@ def _build_prediction(
 ) -> PredictionResult:
     """Core prediction logic: confidence, bets, analysis → PredictionResult."""
     top_prob = norm_probs[predicted_order[0]]
-    confidence = min(max(top_prob * 1.5, 0.1), 0.95)
+    confidence = min(max(top_prob, 0.1), 0.95)
 
     if odds_data is not None:
         from boatrace_ai.ml.bets import generate_bets_ev

@@ -162,7 +162,7 @@ jobs:
         run: mkdir -p .boatrace-data
 
       - name: Train model
-        run: boatrace train --days 90
+        run: boatrace train --days 365
 
       - name: Save data cache
         uses: actions/cache/save@v4

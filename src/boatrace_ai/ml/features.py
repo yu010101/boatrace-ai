@@ -1,6 +1,6 @@
 """Feature extraction from RaceProgram for ML prediction.
 
-27 features per boat x 6 boats = 162 dimensions per race.
+29 features per boat x 6 boats = 174 dimensions per race.
 Each boat produces one row; a race produces 6 rows.
 """
 
@@ -38,9 +38,11 @@ FEATURE_NAMES: list[str] = [
     "national_top1_diff_from_mean",
     "motor_top2_diff_from_mean",
     "class_is_best_in_race",
-    # Race context (2)
+    # Race context (4)
     "stadium_number",
     "grade_number",
+    "race_distance",
+    "branch_number",
 ]
 
 DEFAULT_ST = 0.20  # Default start timing when null
@@ -121,6 +123,8 @@ def extract_features(race: RaceProgram) -> list[dict[str, float]]:
             # Race context
             "stadium_number": float(race.race_stadium_number),
             "grade_number": float(race.race_grade_number),
+            "race_distance": float(race.race_distance),
+            "branch_number": float(b.racer_branch_number),
         }
         rows.append(row)
 

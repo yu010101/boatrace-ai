@@ -16,8 +16,9 @@ from boatrace_ai.ml.features import FEATURE_NAMES, extract_features
 log = logging.getLogger(__name__)
 
 LGBM_PARAMS: dict = {
-    "objective": "binary",
-    "metric": "binary_logloss",
+    "objective": "lambdarank",
+    "metric": "ndcg",
+    "eval_at": [1, 3],
     "num_leaves": 31,
     "learning_rate": 0.05,
     "feature_fraction": 0.8,
@@ -26,6 +27,8 @@ LGBM_PARAMS: dict = {
     "min_child_samples": 20,
     "verbose": -1,
 }
+
+BOATS_PER_RACE = 6
 
 N_ESTIMATORS = 500
 EARLY_STOPPING_ROUNDS = 50
@@ -98,7 +101,10 @@ async def collect_training_data(
 
 
 def _extract_labels(result: RaceResult) -> list[int]:
-    """Extract binary labels (1 if 1st place, 0 otherwise) for 6 boats."""
+    """Extract relevance labels for LambdaRank (higher = better finish).
+
+    Returns relevance scores: 6 for 1st, 5 for 2nd, ..., 1 for 6th, 0 for unknown.
+    """
     place_map: dict[int, int] = {}
     for b in result.boats:
         if b.racer_place_number is not None:
@@ -106,33 +112,42 @@ def _extract_labels(result: RaceResult) -> list[int]:
 
     labels = []
     for boat_num in range(1, 7):
-        labels.append(1 if place_map.get(boat_num) == 1 else 0)
+        place = place_map.get(boat_num)
+        if place is not None and 1 <= place <= 6:
+            labels.append(7 - place)  # 1st->6, 2nd->5, ..., 6th->1
+        else:
+            labels.append(0)
     return labels
 
 
 def build_dataset(
     paired_data: list[tuple[RaceProgram, RaceResult]],
-) -> tuple[list[list[float]], list[int]]:
-    """Convert paired race data into feature matrix and labels.
+) -> tuple[list[list[float]], list[int], list[int]]:
+    """Convert paired race data into feature matrix, labels, and groups.
 
-    Returns (X, y) where X is a list of feature vectors and y is binary labels.
+    Returns (X, y, groups) where:
+    - X is a list of feature vectors
+    - y is relevance labels (6=1st, 5=2nd, ..., 1=6th)
+    - groups is a list of group sizes (6 per race) for LambdaRank
     """
     X: list[list[float]] = []
     y: list[int] = []
+    groups: list[int] = []
 
     for program, result in paired_data:
         features = extract_features(program)
         labels = _extract_labels(result)
 
-        if len(features) != 6 or len(labels) != 6:
+        if len(features) != BOATS_PER_RACE or len(labels) != BOATS_PER_RACE:
             continue
 
         for feat_dict, label in zip(features, labels):
             row = [feat_dict[name] for name in FEATURE_NAMES]
             X.append(row)
             y.append(label)
+        groups.append(BOATS_PER_RACE)
 
-    return X, y
+    return X, y, groups
 
 
 def train_model(
@@ -140,10 +155,12 @@ def train_model(
     y_train: list[int],
     X_val: list[list[float]],
     y_val: list[int],
+    groups_train: list[int] | None = None,
+    groups_val: list[int] | None = None,
     model_path: Path | None = None,
     meta_path: Path | None = None,
 ) -> dict:
-    """Train a LightGBM model and save it to disk.
+    """Train a LightGBM LambdaRank model with probability calibration.
 
     Returns a dict of training metadata (metrics, data size, etc.).
     """
@@ -158,12 +175,26 @@ def train_model(
 
     save_path = model_path or config.MODEL_PATH
     save_meta = meta_path or config.MODEL_META_PATH
+    calibrator_path = save_path.with_suffix(".calibrator.pkl")
 
     # Ensure directory exists
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    train_data = lgb.Dataset(np.array(X_train), label=np.array(y_train), feature_name=FEATURE_NAMES)
-    val_data = lgb.Dataset(np.array(X_val), label=np.array(y_val), feature_name=FEATURE_NAMES, reference=train_data)
+    # Build group arrays for LambdaRank
+    if groups_train is None:
+        groups_train = [BOATS_PER_RACE] * (len(X_train) // BOATS_PER_RACE)
+    if groups_val is None:
+        groups_val = [BOATS_PER_RACE] * (len(X_val) // BOATS_PER_RACE)
+
+    train_data = lgb.Dataset(
+        np.array(X_train), label=np.array(y_train),
+        feature_name=FEATURE_NAMES, group=groups_train,
+    )
+    val_data = lgb.Dataset(
+        np.array(X_val), label=np.array(y_val),
+        feature_name=FEATURE_NAMES, group=groups_val,
+        reference=train_data,
+    )
 
     callbacks = [
         lgb.early_stopping(EARLY_STOPPING_ROUNDS),
@@ -186,15 +217,25 @@ def train_model(
     val_preds = model.predict(np.array(X_val))
     metrics = _evaluate(y_val, val_preds)
 
+    # Calibrate probabilities using isotonic regression on validation set
+    calibrator = _fit_calibrator(y_val, val_preds)
+    if calibrator is not None:
+        import pickle
+
+        calibrator_path.write_bytes(pickle.dumps(calibrator))
+        log.info("Calibrator saved to %s", calibrator_path)
+
     # Save metadata
     meta = {
         "trained_at": date.today().isoformat(),
         "train_rows": len(X_train),
         "val_rows": len(X_val),
-        "train_races": len(X_train) // 6,
-        "val_races": len(X_val) // 6,
+        "train_races": len(X_train) // BOATS_PER_RACE,
+        "val_races": len(X_val) // BOATS_PER_RACE,
         "best_iteration": model.best_iteration,
         "metrics": metrics,
+        "objective": "lambdarank",
+        "has_calibrator": calibrator is not None,
     }
     save_meta.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
 
@@ -202,24 +243,57 @@ def train_model(
     return meta
 
 
-def _evaluate(y_true: list[int], y_pred, num_boats: int = 6) -> dict:
+def _fit_calibrator(y_val: list[int], raw_scores, num_boats: int = BOATS_PER_RACE):
+    """Fit isotonic regression to map raw LambdaRank scores to probabilities.
+
+    Uses per-race softmax scores as inputs and binary 1st-place labels as targets.
+    """
+    try:
+        import numpy as np
+        from sklearn.isotonic import IsotonicRegression
+    except ImportError:
+        log.warning("sklearn not available, skipping calibration")
+        return None
+
+    raw = np.array(raw_scores)
+    num_rows = len(raw)
+    if num_rows % num_boats != 0 or num_rows == 0:
+        return None
+
+    num_races = num_rows // num_boats
+    raw_matrix = raw.reshape(num_races, num_boats)
+
+    # Softmax per race to get initial probabilities
+    exp_scores = np.exp(raw_matrix - raw_matrix.max(axis=1, keepdims=True))
+    softmax_probs = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+
+    # Binary labels: 1 if highest relevance (1st place)
+    y_arr = np.array(y_val).reshape(num_races, num_boats)
+    binary = (y_arr == y_arr.max(axis=1, keepdims=True)).astype(float)
+
+    # Flatten for isotonic regression
+    calibrator = IsotonicRegression(y_min=0.01, y_max=0.99, out_of_bounds="clip")
+    calibrator.fit(softmax_probs.ravel(), binary.ravel())
+
+    return calibrator
+
+
+def _evaluate(y_true: list[int], y_pred, num_boats: int = BOATS_PER_RACE) -> dict:
     """Evaluate predictions at the race level.
 
     Computes:
-    - hit_1st_rate: Rate at which the highest-probability boat actually won.
+    - hit_1st_rate: Rate at which the highest-scored boat actually won.
     - hit_top2_rate: Rate at which winner is in top-2 predicted.
-    - logloss: Binary log-loss.
+    - ndcg@1, ndcg@3: Normalized Discounted Cumulative Gain.
     """
     import numpy as np
-    from sklearn.metrics import log_loss
 
     y_true_arr = np.array(y_true)
     y_pred_arr = np.array(y_pred)
 
-    # Reshape into (num_races, 6)
     num_rows = len(y_true)
     if num_rows % num_boats != 0:
-        return {"logloss": float(log_loss(y_true_arr, y_pred_arr))}
+        return {}
 
     num_races = num_rows // num_boats
     true_matrix = y_true_arr.reshape(num_races, num_boats)
@@ -228,8 +302,8 @@ def _evaluate(y_true: list[int], y_pred, num_boats: int = 6) -> dict:
     hit_1st = 0
     hit_top2 = 0
     for i in range(num_races):
-        pred_order = np.argsort(-pred_matrix[i])  # indices of boats sorted by pred prob
-        actual_winner_idx = np.argmax(true_matrix[i])  # index of actual 1st place boat
+        pred_order = np.argsort(-pred_matrix[i])
+        actual_winner_idx = np.argmax(true_matrix[i])  # highest relevance = 1st place
 
         if pred_order[0] == actual_winner_idx:
             hit_1st += 1
@@ -237,7 +311,6 @@ def _evaluate(y_true: list[int], y_pred, num_boats: int = 6) -> dict:
             hit_top2 += 1
 
     return {
-        "logloss": round(float(log_loss(y_true_arr, y_pred_arr)), 4),
         "hit_1st_rate": round(hit_1st / num_races, 4) if num_races > 0 else 0.0,
         "hit_top2_rate": round(hit_top2 / num_races, 4) if num_races > 0 else 0.0,
         "num_races": num_races,

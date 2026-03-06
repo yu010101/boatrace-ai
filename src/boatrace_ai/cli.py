@@ -297,7 +297,7 @@ async def _predict_single(stadium: int, race_num: int, date_str: str | None, mod
 
 
 @cli.command("train")
-@click.option("--days", "-d", default=90, type=click.IntRange(7, 365), help="訓練データ日数 (default: 90)")
+@click.option("--days", "-d", default=365, type=click.IntRange(7, 730), help="訓練データ日数 (default: 365)")
 @click.option("--val-days", default=14, type=click.IntRange(1, 90), help="バリデーション日数 (default: 14)")
 def train_cmd(days: int, val_days: int) -> None:
     """MLモデルを訓練"""
@@ -346,15 +346,15 @@ async def _train(days: int, val_days: int) -> None:
 
     # Step 3: Build datasets
     with console.status("[bold green]特徴量を抽出中..."):
-        X_train, y_train = build_dataset(train_pairs)
-        X_val, y_val = build_dataset(val_pairs)
+        X_train, y_train, groups_train = build_dataset(train_pairs)
+        X_val, y_val, groups_val = build_dataset(val_pairs)
 
     console.print(f"  特徴量抽出完了: 訓練 {len(X_train)} 行 / 検証 {len(X_val)} 行")
 
     # Step 4: Train
     try:
-        with console.status("[bold green]LightGBM 訓練中..."):
-            meta = train_model(X_train, y_train, X_val, y_val)
+        with console.status("[bold green]LightGBM LambdaRank 訓練中..."):
+            meta = train_model(X_train, y_train, X_val, y_val, groups_train, groups_val)
     except Exception as e:
         display_error(f"訓練に失敗: {e}")
         return

@@ -115,17 +115,16 @@ def test_extract_labels_winner_boat1() -> None:
     labels = _extract_labels(result)
 
     assert len(labels) == 6
-    assert labels[0] == 1  # Boat 1 is winner
-    assert sum(labels) == 1  # Only one winner
+    assert labels[0] == 6  # Boat 1 is winner (relevance 6)
+    assert max(labels) == 6  # Winner has highest relevance
 
 
 def test_extract_labels_winner_boat3() -> None:
     result = _make_race_result("2026-01-01", winner=3)
     labels = _extract_labels(result)
 
-    assert labels[2] == 1  # Boat 3 (index 2) is winner
-    assert labels[0] == 0
-    assert sum(labels) == 1
+    assert labels[2] == 6  # Boat 3 (index 2) is winner (relevance 6)
+    assert labels[0] != 6  # Boat 1 is not the winner
 
 
 def test_build_dataset_produces_correct_shape() -> None:
@@ -134,22 +133,23 @@ def test_build_dataset_produces_correct_shape() -> None:
         (_make_race_program("2026-01-02"), _make_race_result("2026-01-02", winner=3)),
     ]
 
-    X, y = build_dataset(pairs)
+    X, y, groups = build_dataset(pairs)
 
     assert len(X) == 12  # 2 races x 6 boats
     assert len(y) == 12
-    assert all(len(row) == 27 for row in X)  # 27 features
-    assert sum(y) == 2  # 2 winners
+    assert all(len(row) == 29 for row in X)  # 29 features
+    assert groups == [6, 6]  # 2 races with 6 boats each
 
 
-def test_build_dataset_labels_are_binary() -> None:
+def test_build_dataset_labels_are_relevance_scores() -> None:
     pairs = [
         (_make_race_program("2026-01-01"), _make_race_result("2026-01-01", winner=2)),
     ]
 
-    X, y = build_dataset(pairs)
+    X, y, groups = build_dataset(pairs)
 
-    assert all(label in (0, 1) for label in y)
+    assert all(0 <= label <= 6 for label in y)
+    assert max(y) == 6  # Winner has relevance 6
 
 
 def test_time_series_split_basic() -> None:

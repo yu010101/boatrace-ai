@@ -48,7 +48,8 @@ def test_morning_tweet_no_s_rank() -> None:
 
 def test_morning_tweet_with_url() -> None:
     tweet = build_morning_tweet("2026-03-02", [], note_url="https://note.com/test")
-    assert "https://note.com/test" in tweet
+    assert "https://note.com/test" not in tweet  # URL no longer embedded (link penalty)
+    assert "プロフリンクから" in tweet
 
 
 def test_hit_tweet() -> None:
@@ -114,7 +115,8 @@ def test_daily_tweet_with_url() -> None:
         roi=1.2,
         note_url="https://note.com/report",
     )
-    assert "https://note.com/report" in tweet
+    assert "https://note.com/report" not in tweet  # URL no longer embedded (link penalty)
+    assert "プロフリンクから" in tweet
 
 
 def test_tweet_truncation() -> None:

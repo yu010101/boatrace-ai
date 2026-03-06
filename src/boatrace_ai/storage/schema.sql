@@ -101,6 +101,27 @@ CREATE TABLE IF NOT EXISTS tweet_log (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS published_articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_date TEXT NOT NULL,
+    article_type TEXT NOT NULL,        -- 'grades', 'results', 'premium', 'track_record', 'midday', 'membership'
+    note_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(race_date, article_type)
+);
+
+CREATE TABLE IF NOT EXISTS engagement_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    engagement_type TEXT NOT NULL,   -- 'quote', 'reply', 'like'
+    target_handle TEXT NOT NULL,
+    target_tweet_id TEXT,
+    our_tweet_id TEXT,
+    tweet_text TEXT,
+    race_date TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_predictions_date ON predictions(race_date);
 CREATE INDEX IF NOT EXISTS idx_predictions_lookup ON predictions(race_date, stadium_number, race_number);
@@ -113,3 +134,5 @@ CREATE INDEX IF NOT EXISTS idx_virtual_bets_unchecked ON virtual_bets(is_hit) WH
 CREATE INDEX IF NOT EXISTS idx_tweet_log_date ON tweet_log(race_date, tweet_type);
 CREATE INDEX IF NOT EXISTS idx_race_odds_date ON race_odds(race_date);
 CREATE INDEX IF NOT EXISTS idx_race_odds_lookup ON race_odds(race_date, stadium_number, race_number);
+CREATE INDEX IF NOT EXISTS idx_engagement_log_date ON engagement_log(race_date, engagement_type);
+CREATE INDEX IF NOT EXISTS idx_published_articles_type ON published_articles(article_type);

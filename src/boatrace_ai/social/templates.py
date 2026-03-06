@@ -40,7 +40,7 @@ def build_morning_tweet(
 
     lines.append("")
     if note_url:
-        lines.append(f"詳細はこちら {note_url}")
+        lines.append("全レース予測はプロフリンクから")
     lines.append("#競艇AI予測 #ボートレース")
 
     return _truncate("\n".join(lines))
@@ -68,6 +68,30 @@ def build_hit_tweet(
     return _truncate("\n".join(lines))
 
 
+def build_midday_tweet(
+    race_date: str,
+    total_races: int,
+    hit_1st: int,
+    hit_tri: int,
+    note_url: str = "",
+) -> str:
+    """Build midday (morning session) report tweet."""
+    hit_pct = int(hit_1st / total_races * 100) if total_races > 0 else 0
+
+    lines: list[str] = []
+    lines.append(f"【午前速報】{race_date}")
+    lines.append(f"午前{total_races}R: 1着{hit_1st}的中({hit_pct}%)")
+    if hit_tri > 0:
+        lines.append(f"3連単{hit_tri}本的中!")
+    lines.append("")
+    lines.append("午後もSランク中心に配信中")
+    if note_url:
+        lines.append("詳細はプロフリンクから")
+    lines.append("#競艇AI予測 #ボートレース")
+
+    return _truncate("\n".join(lines))
+
+
 def build_daily_tweet(
     race_date: str,
     total_races: int,
@@ -87,7 +111,7 @@ def build_daily_tweet(
     lines.append("")
 
     if note_url:
-        lines.append(f"詳細 {note_url}")
+        lines.append("全結果はプロフリンクから")
     lines.append("#競艇AI予測 #ボートレース")
 
     return _truncate("\n".join(lines))

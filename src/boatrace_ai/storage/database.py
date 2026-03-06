@@ -563,6 +563,170 @@ def get_race_odds(
         conn.close()
 
 
+def save_published_article(
+    race_date: str, article_type: str, note_url: str, title: str,
+) -> None:
+    """Save a published article record."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO published_articles
+               (race_date, article_type, note_url, title)
+               VALUES (?, ?, ?, ?)""",
+            (race_date, article_type, note_url, title),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_latest_article(article_type: str) -> dict | None:
+    """Get the most recent published article of a given type."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            """SELECT * FROM published_articles
+               WHERE article_type = ?
+               ORDER BY race_date DESC, created_at DESC
+               LIMIT 1""",
+            (article_type,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_accuracy_trend(days: int = 30) -> list[dict]:
+    """Daily accuracy trend. Returns list of {date, total, hit_1st, hit_1st_rate, hit_tri, hit_tri_rate}."""
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT race_date,
+                      COUNT(*) as total,
+                      SUM(hit_1st) as hit_1st,
+                      SUM(hit_trifecta) as hit_tri
+               FROM accuracy_log
+               WHERE race_date >= date('now', ? || ' days')
+               GROUP BY race_date
+               ORDER BY race_date DESC""",
+            (f"-{days}",),
+        ).fetchall()
+        result = []
+        for r in rows:
+            total = r["total"]
+            hit_1st = r["hit_1st"] or 0
+            hit_tri = r["hit_tri"] or 0
+            result.append({
+                "date": r["race_date"],
+                "total": total,
+                "hit_1st": hit_1st,
+                "hit_1st_rate": hit_1st / total if total > 0 else 0.0,
+                "hit_tri": hit_tri,
+                "hit_tri_rate": hit_tri / total if total > 0 else 0.0,
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def get_roi_trend(days: int = 30) -> list[dict]:
+    """Daily ROI trend. Returns list of {date, bets, invested, payout, roi}."""
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT race_date,
+                      COUNT(*) as bets,
+                      SUM(bet_amount) as invested,
+                      SUM(payout) as payout
+               FROM virtual_bets
+               WHERE race_date >= date('now', ? || ' days')
+                 AND is_hit IS NOT NULL
+               GROUP BY race_date
+               ORDER BY race_date DESC""",
+            (f"-{days}",),
+        ).fetchall()
+        result = []
+        for r in rows:
+            invested = r["invested"] or 0
+            payout = r["payout"] or 0
+            result.append({
+                "date": r["race_date"],
+                "bets": r["bets"],
+                "invested": invested,
+                "payout": payout,
+                "roi": payout / invested if invested > 0 else 0.0,
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def save_engagement_log(
+    engagement_type: str,
+    target_handle: str,
+    race_date: str,
+    target_tweet_id: str | None = None,
+    our_tweet_id: str | None = None,
+    tweet_text: str | None = None,
+) -> None:
+    """Save an engagement log entry (quote, reply, or like)."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO engagement_log
+               (engagement_type, target_handle, target_tweet_id,
+                our_tweet_id, tweet_text, race_date)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (engagement_type, target_handle, target_tweet_id,
+             our_tweet_id, tweet_text, race_date),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_engagement_count(race_date: str, engagement_type: str) -> int:
+    """Get count of engagements of a given type for a date."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            """SELECT COUNT(*) as cnt FROM engagement_log
+               WHERE race_date = ? AND engagement_type = ?""",
+            (race_date, engagement_type),
+        ).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_engagement_count_for_handle(race_date: str, engagement_type: str, target_handle: str) -> int:
+    """Get count of engagements of a given type for a specific handle on a date."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            """SELECT COUNT(*) as cnt FROM engagement_log
+               WHERE race_date = ? AND engagement_type = ? AND target_handle = ?""",
+            (race_date, engagement_type, target_handle),
+        ).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_engagement_log(race_date: str) -> list[dict]:
+    """Get all engagement log entries for a date."""
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM engagement_log
+               WHERE race_date = ? ORDER BY created_at""",
+            (race_date,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def get_accuracy_for_date(race_date: str) -> list[dict]:
     """Get accuracy records for a specific date.
 

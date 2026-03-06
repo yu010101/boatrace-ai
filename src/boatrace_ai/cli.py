@@ -41,19 +41,26 @@ from boatrace_ai.publish.article import (
     generate_accuracy_report,
     generate_article,
     generate_grade_summary_article,
+    generate_membership_article,
+    generate_midday_report,
+    generate_track_record_article,
 )
 from boatrace_ai.publish.note_client import NoteClient
 from boatrace_ai.scoring.grader import grade_race
 from boatrace_ai.storage.database import (
     check_accuracy,
     get_accuracy_for_date,
+    get_accuracy_trend,
     get_grades_for_date,
+    get_latest_article,
     get_predictions_for_date,
     get_roi_daily,
     get_roi_stats,
+    get_roi_trend,
     get_stats,
     init_db,
     save_prediction,
+    save_published_article,
     save_race_grade,
     save_race_odds,
     save_result,
@@ -520,26 +527,44 @@ def tweet_morning(date_str: str | None, dry_run: bool) -> None:
     target_str = date_str or date.today().isoformat()
 
     from boatrace_ai.social.templates import build_morning_tweet
-    from boatrace_ai.social.twitter import post_tweet
+    from boatrace_ai.social.twitter import post_tweet_with_link_reply
 
     grades = get_grades_for_date(target_str)
     s_rank = [g for g in grades if g["grade"] == "S"]
 
-    tweet_text = build_morning_tweet(target_str, s_rank)
+    # note_url for self-reply
+    article = get_latest_article("grades")
+    note_url = article["note_url"] if article and article.get("race_date") == target_str else ""
+
+    tweet_text = build_morning_tweet(target_str, s_rank, note_url=note_url)
     console.print(f"\n[bold]ツイート内容:[/bold]\n{tweet_text}\n")
+    if note_url:
+        console.print(f"[dim]self-reply: {note_url}[/dim]\n")
 
     if dry_run:
         console.print("[yellow]--dry-run: 投稿をスキップしました[/yellow]")
         return
 
     try:
-        tweet_id = post_tweet(
-            tweet_text, tweet_type="morning", race_date=target_str, dry_run=False,
-        )
-        if tweet_id:
-            console.print(f"[green]投稿成功 (id={tweet_id})[/green]")
+        if note_url:
+            main_id, reply_id = post_tweet_with_link_reply(
+                tweet_text,
+                f"全レース予測はこちら\n{note_url}",
+                tweet_type="morning", race_date=target_str, dry_run=False,
+            )
+            if main_id:
+                console.print(f"[green]投稿成功 (id={main_id}, reply={reply_id})[/green]")
+            else:
+                console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
         else:
-            console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
+            from boatrace_ai.social.twitter import post_tweet
+            tweet_id = post_tweet(
+                tweet_text, tweet_type="morning", race_date=target_str, dry_run=False,
+            )
+            if tweet_id:
+                console.print(f"[green]投稿成功 (id={tweet_id})[/green]")
+            else:
+                console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
     except Exception as e:
         display_error(f"ツイート投稿に失敗: {e}")
 
@@ -616,33 +641,52 @@ def tweet_daily(date_str: str | None, dry_run: bool) -> None:
     target_str = date_str or date.today().isoformat()
 
     from boatrace_ai.social.templates import build_daily_tweet
-    from boatrace_ai.social.twitter import post_tweet
+    from boatrace_ai.social.twitter import post_tweet_with_link_reply
 
     daily = get_roi_daily(target_str)
     if daily["total_bets"] == 0:
         display_error("本日のベットデータがありません。")
         return
 
+    # note_url for self-reply
+    article = get_latest_article("results")
+    note_url = article["note_url"] if article and article.get("race_date") == target_str else ""
+
     tweet_text = build_daily_tweet(
         target_str,
         daily["total_bets"],
         daily["hit_count"],
         daily["roi"],
+        note_url=note_url,
     )
     console.print(f"\n[bold]ツイート内容:[/bold]\n{tweet_text}\n")
+    if note_url:
+        console.print(f"[dim]self-reply: {note_url}[/dim]\n")
 
     if dry_run:
         console.print("[yellow]--dry-run: 投稿をスキップしました[/yellow]")
         return
 
     try:
-        tweet_id = post_tweet(
-            tweet_text, tweet_type="daily", race_date=target_str, dry_run=False,
-        )
-        if tweet_id:
-            console.print(f"[green]投稿成功 (id={tweet_id})[/green]")
+        if note_url:
+            main_id, reply_id = post_tweet_with_link_reply(
+                tweet_text,
+                f"全結果レポートはこちら\n{note_url}",
+                tweet_type="daily", race_date=target_str, dry_run=False,
+            )
+            if main_id:
+                console.print(f"[green]投稿成功 (id={main_id}, reply={reply_id})[/green]")
+            else:
+                console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
         else:
-            console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
+            from boatrace_ai.social.twitter import post_tweet
+            tweet_id = post_tweet(
+                tweet_text, tweet_type="daily", race_date=target_str, dry_run=False,
+            )
+            if tweet_id:
+                console.print(f"[green]投稿成功 (id={tweet_id})[/green]")
+            else:
+                console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
     except Exception as e:
         display_error(f"ツイート投稿に失敗: {e}")
 
@@ -940,6 +984,8 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)
+        if url:
+            save_published_article(target_str, "results", url, title)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -991,6 +1037,8 @@ async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) 
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "grades", url, title)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1091,6 +1139,394 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
             await asyncio.sleep(config.NOTE_PUBLISH_INTERVAL)
 
     display_publish_summary(success, failed, total)
+
+
+@publish.command("track-record")
+@click.option("--days", "-d", default=30, type=click.IntRange(7, 90), help="集計日数 (default: 30)")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def publish_track_record(days: int, dry_run: bool) -> None:
+    """週次実績レポートを生成してnote投稿"""
+    asyncio.run(_publish_track_record(days, dry_run))
+
+
+def _get_related_links(*article_types: str) -> dict[str, dict]:
+    """Fetch latest published articles for cross-linking."""
+    links: dict[str, dict] = {}
+    for t in article_types:
+        article = get_latest_article(t)
+        if article:
+            links[t] = {"note_url": article["note_url"], "title": article["title"]}
+    return links
+
+
+async def _publish_track_record(days: int, dry_run: bool) -> None:
+    accuracy_trend = get_accuracy_trend(days)
+    roi_trend = get_roi_trend(days)
+    stats = get_stats()
+
+    if not accuracy_trend:
+        display_error("実績データがありません。")
+        return
+
+    related_links = _get_related_links("grades", "results", "midday")
+    title, html_body, hashtags = generate_track_record_article(
+        accuracy_trend, roi_trend, stats, related_links=related_links,
+    )
+
+    if dry_run:
+        console.print(f"\n[bold]タイトル:[/bold] {title}")
+        console.print(html_body)
+        return
+
+    try:
+        note_client = NoteClient()
+        with console.status("[bold green]note.com にログイン確認中..."):
+            await note_client.ensure_logged_in()
+        with console.status("[bold green]実績レポートを投稿中..."):
+            result = await note_client.create_and_publish(
+                title, html_body, price=0, hashtags=hashtags
+            )
+        url = result.get("note_url", "")
+        display_publish_result(title, url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "track_record", url, title)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
+
+
+@publish.command("midday")
+@click.argument("date_str", default=None, required=False)
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def publish_midday(date_str: str | None, dry_run: bool) -> None:
+    """午前の中間速報を生成してnote投稿"""
+    asyncio.run(_publish_midday(date_str, dry_run))
+
+
+async def _publish_midday(date_str: str | None, dry_run: bool) -> None:
+    target_str = date_str or date.today().isoformat()
+
+    # Fetch & save results so far
+    try:
+        with console.status(f"[bold green]{target_str}の結果を取得中..."):
+            resp = await fetch_results(_parse_date(target_str))
+    except Exception as e:
+        display_error(f"結果の取得に失敗: {e}")
+        return
+
+    count = 0
+    for result in resp.results:
+        has_results = any(b.racer_place_number is not None for b in result.boats)
+        if has_results:
+            save_result(result.race_date, result)
+            count += 1
+
+    if count == 0:
+        display_error(f"{target_str}の結果がまだありません。")
+        return
+
+    display_results_saved(count, target_str)
+
+    # Update accuracy
+    with console.status("[bold green]的中判定中..."):
+        check_accuracy()
+
+    records = get_accuracy_for_date(target_str)
+    if not records:
+        display_error(f"{target_str}の午前データがありません。")
+        return
+
+    related_links = _get_related_links("grades", "results", "track_record")
+    title, html_body, hashtags = generate_midday_report(
+        target_str, records, related_links=related_links,
+    )
+
+    if dry_run:
+        console.print(f"\n[bold]タイトル:[/bold] {title}")
+        console.print(html_body)
+        return
+
+    try:
+        note_client = NoteClient()
+        with console.status("[bold green]note.com にログイン確認中..."):
+            await note_client.ensure_logged_in()
+        with console.status("[bold green]中間速報を投稿中..."):
+            result = await note_client.create_and_publish(
+                title, html_body, price=0, hashtags=hashtags
+            )
+        url = result.get("note_url", "")
+        display_publish_result(title, url, 0)
+        if url:
+            save_published_article(target_str, "midday", url, title)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
+
+
+@publish.command("membership")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def publish_membership(dry_run: bool) -> None:
+    """メンバーシップ紹介記事を生成してnote投稿"""
+    asyncio.run(_publish_membership(dry_run))
+
+
+async def _publish_membership(dry_run: bool) -> None:
+    stats = get_stats()
+    related_links = _get_related_links("grades", "results", "track_record")
+    title, html_body, hashtags = generate_membership_article(
+        stats, related_links=related_links,
+    )
+
+    if dry_run:
+        console.print(f"\n[bold]タイトル:[/bold] {title}")
+        console.print(html_body)
+        return
+
+    try:
+        note_client = NoteClient()
+        with console.status("[bold green]note.com にログイン確認中..."):
+            await note_client.ensure_logged_in()
+        with console.status("[bold green]メンバーシップ記事を投稿中..."):
+            result = await note_client.create_and_publish(
+                title, html_body, price=0, hashtags=hashtags
+            )
+        url = result.get("note_url", "")
+        display_publish_result(title, url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "membership", url, title)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
+
+
+@tweet.command("midday")
+@click.argument("date_str", default=None, required=False)
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def tweet_midday(date_str: str | None, dry_run: bool) -> None:
+    """午前の中間速報ツイート"""
+    target_str = date_str or date.today().isoformat()
+
+    from boatrace_ai.social.templates import build_midday_tweet
+    from boatrace_ai.social.twitter import post_tweet_with_link_reply
+
+    records = get_accuracy_for_date(target_str)
+    if not records:
+        display_error("午前のデータがありません。先に publish midday を実行してください。")
+        return
+
+    total = len(records)
+    hit_1st = sum(1 for r in records if r["hit_1st"])
+    hit_tri = sum(1 for r in records if r["hit_trifecta"])
+
+    # note_url for self-reply
+    article = get_latest_article("midday")
+    note_url = article["note_url"] if article and article.get("race_date") == target_str else ""
+
+    tweet_text = build_midday_tweet(target_str, total, hit_1st, hit_tri, note_url=note_url)
+    console.print(f"\n[bold]ツイート内容:[/bold]\n{tweet_text}\n")
+    if note_url:
+        console.print(f"[dim]self-reply: {note_url}[/dim]\n")
+
+    if dry_run:
+        console.print("[yellow]--dry-run: 投稿をスキップしました[/yellow]")
+        return
+
+    try:
+        if note_url:
+            main_id, reply_id = post_tweet_with_link_reply(
+                tweet_text,
+                f"午前の詳細はこちら\n{note_url}",
+                tweet_type="midday", race_date=target_str, dry_run=False,
+            )
+            if main_id:
+                console.print(f"[green]投稿成功 (id={main_id}, reply={reply_id})[/green]")
+            else:
+                console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
+        else:
+            from boatrace_ai.social.twitter import post_tweet
+            tweet_id = post_tweet(
+                tweet_text, tweet_type="midday", race_date=target_str, dry_run=False,
+            )
+            if tweet_id:
+                console.print(f"[green]投稿成功 (id={tweet_id})[/green]")
+            else:
+                console.print("[yellow]既に投稿済み、またはスキップされました[/yellow]")
+    except Exception as e:
+        display_error(f"ツイート投稿に失敗: {e}")
+
+
+# ── engage ───────────────────────────────────────────────
+
+
+@cli.group()
+def engage() -> None:
+    """X エンゲージメント（引用RT・リプライ・いいね）"""
+    pass
+
+
+@engage.command("scan")
+@click.option("--target", "-t", default=None, help="特定のハンドル名でフィルタ")
+def engage_scan(target: str | None) -> None:
+    """ターゲットの最新投稿をスキャン"""
+    from boatrace_ai.social.engagement import scan_targets
+
+    with console.status("[bold green]ターゲット投稿をスキャン中..."):
+        results = scan_targets(target_handle=target)
+
+    if not results:
+        console.print("[yellow]競艇関連のツイートが見つかりませんでした[/yellow]")
+        return
+
+    for data in results:
+        console.print(f"\n[bold]@{data['handle']}[/bold] ({data['name']}) [優先度{data['priority']}]")
+        for tweet in data["tweets"]:
+            metrics = tweet.get("metrics", {})
+            likes = metrics.get("like_count", 0)
+            rts = metrics.get("retweet_count", 0)
+            text_preview = tweet["text"][:80].replace("\n", " ")
+            console.print(f"  [{tweet['id']}] {text_preview}... (♥{likes} RT{rts})")
+
+
+@engage.command("quote")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def engage_quote(dry_run: bool) -> None:
+    """引用RT候補を表示・実行"""
+    from boatrace_ai.social.engagement import (
+        can_quote,
+        pick_quote_template,
+        scan_targets,
+    )
+    from boatrace_ai.social.twitter import quote_repost
+
+    race_date = date.today().isoformat()
+
+    if not can_quote(race_date):
+        console.print("[yellow]本日の引用RT上限に達しています[/yellow]")
+        return
+
+    results = scan_targets()
+    if not results:
+        console.print("[yellow]引用RT候補が見つかりませんでした[/yellow]")
+        return
+
+    from boatrace_ai.storage.database import save_engagement_log
+
+    for data in results:
+        handle = data["handle"]
+        if not can_quote(race_date, handle):
+            continue
+        if not data["tweets"]:
+            continue
+
+        tweet = data["tweets"][0]
+        text = pick_quote_template()
+        console.print(f"\n[bold]引用RT:[/bold] @{handle} の [{tweet['id']}]")
+        console.print(f"  テンプレート: {text}")
+
+        if dry_run:
+            console.print("  [yellow]--dry-run: スキップ[/yellow]")
+            continue
+
+        our_id = quote_repost(tweet["id"], text, race_date)
+        if our_id:
+            save_engagement_log(
+                "quote", handle, race_date,
+                target_tweet_id=tweet["id"],
+                our_tweet_id=our_id,
+                tweet_text=text,
+            )
+            console.print(f"  [green]投稿成功 (id={our_id})[/green]")
+        else:
+            console.print("  [red]投稿に失敗しました[/red]")
+
+
+@engage.command("reply")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def engage_reply(dry_run: bool) -> None:
+    """リプライ候補を表示・実行"""
+    from boatrace_ai.social.engagement import (
+        can_reply,
+        pick_reply_template,
+        scan_targets,
+    )
+    from boatrace_ai.social.twitter import reply_to_tweet
+
+    race_date = date.today().isoformat()
+
+    if not can_reply(race_date):
+        console.print("[yellow]本日のリプライ上限に達しています[/yellow]")
+        return
+
+    results = scan_targets()
+    if not results:
+        console.print("[yellow]リプライ候補が見つかりませんでした[/yellow]")
+        return
+
+    from boatrace_ai.storage.database import save_engagement_log
+
+    for data in results:
+        handle = data["handle"]
+        if not can_reply(race_date):
+            break
+        if not data["tweets"]:
+            continue
+
+        tweet = data["tweets"][0]
+        text = pick_reply_template()
+        console.print(f"\n[bold]リプライ:[/bold] @{handle} の [{tweet['id']}]")
+        console.print(f"  テンプレート: {text}")
+
+        if dry_run:
+            console.print("  [yellow]--dry-run: スキップ[/yellow]")
+            continue
+
+        reply_id = reply_to_tweet(tweet["id"], text, dry_run=False)
+        if reply_id:
+            save_engagement_log(
+                "reply", handle, race_date,
+                target_tweet_id=tweet["id"],
+                our_tweet_id=reply_id,
+                tweet_text=text,
+            )
+            console.print(f"  [green]投稿成功 (id={reply_id})[/green]")
+        else:
+            console.print("  [red]投稿に失敗しました[/red]")
+
+
+@engage.command("auto")
+@click.option("--timing", "-t", type=click.Choice(["morning", "evening"]), required=True, help="タイミング")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def engage_auto(timing: str, dry_run: bool) -> None:
+    """自動エンゲージメント実行"""
+    from boatrace_ai.social.engagement import execute_engagement
+
+    console.print(f"\n[bold]自動エンゲージメント ({timing})[/bold]")
+
+    if dry_run:
+        console.print("[yellow]--dry-run モード[/yellow]")
+
+    try:
+        summary = execute_engagement(timing=timing, dry_run=dry_run)
+        console.print(f"\n[bold]結果:[/bold]")
+        console.print(f"  引用RT: {summary['quotes']}")
+        console.print(f"  リプライ: {summary['replies']}")
+        console.print(f"  いいね: {summary['likes']}")
+        console.print(f"  スキップ: {summary['skipped']}")
+    except Exception as e:
+        display_error(f"エンゲージメント実行に失敗: {e}")
+
+
+@engage.command("stats")
+@click.argument("date_str", default=None, required=False)
+def engage_stats(date_str: str | None) -> None:
+    """エンゲージメント統計"""
+    from boatrace_ai.social.engagement import get_engagement_stats
+
+    target_date = date_str or date.today().isoformat()
+    stats = get_engagement_stats(target_date)
+
+    console.print(f"\n[bold]エンゲージメント統計 ({stats['date']})[/bold]")
+    limits = stats["limits"]
+    console.print(f"  引用RT: {stats['quotes']}/{limits['max_quotes']}")
+    console.print(f"  リプライ: {stats['replies']}/{limits['max_replies']}")
+    console.print(f"  いいね: {stats['likes']}/{limits['max_likes']}")
 
 
 # ── backtest ─────────────────────────────────────────────

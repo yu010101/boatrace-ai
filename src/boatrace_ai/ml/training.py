@@ -11,7 +11,7 @@ from pathlib import Path
 from boatrace_ai import config
 from boatrace_ai.data.client import fetch_programs, fetch_results
 from boatrace_ai.data.models import ProgramsResponse, RaceProgram, RaceResult, ResultsResponse
-from boatrace_ai.ml.features import FEATURE_NAMES, extract_features
+from boatrace_ai.ml.features import CATEGORICAL_FEATURES, FEATURE_NAMES, extract_features
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ BOATS_PER_RACE = 6
 N_ESTIMATORS = 500
 EARLY_STOPPING_ROUNDS = 50
 SEMAPHORE_LIMIT = 5
+
+# Optuna HPO settings
+OPTUNA_N_TRIALS = 50
+OPTUNA_TIMEOUT = 600  # 10 minutes
 
 
 async def _fetch_day(
@@ -150,6 +154,104 @@ def build_dataset(
     return X, y, groups
 
 
+def _get_categorical_indices() -> list[int]:
+    """Get indices of categorical features in FEATURE_NAMES."""
+    return [FEATURE_NAMES.index(name) for name in CATEGORICAL_FEATURES if name in FEATURE_NAMES]
+
+
+def tune_hyperparams(
+    X_train: list[list[float]],
+    y_train: list[int],
+    X_val: list[list[float]],
+    y_val: list[int],
+    groups_train: list[int],
+    groups_val: list[int],
+    n_trials: int = OPTUNA_N_TRIALS,
+    timeout: int = OPTUNA_TIMEOUT,
+) -> dict:
+    """Use Optuna to find optimal LightGBM hyperparameters.
+
+    Returns the best parameter dict.
+    """
+    import lightgbm as lgb
+    import numpy as np
+    import optuna
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    np_X_train = np.array(X_train)
+    np_y_train = np.array(y_train)
+    np_X_val = np.array(X_val)
+    np_y_val = np.array(y_val)
+
+    cat_indices = _get_categorical_indices()
+
+    def objective(trial: optuna.Trial) -> float:
+        params = {
+            "objective": "lambdarank",
+            "metric": "ndcg",
+            "eval_at": [1, 3],
+            "verbose": -1,
+            "num_leaves": trial.suggest_int("num_leaves", 15, 127),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+            "feature_fraction": trial.suggest_float("feature_fraction", 0.5, 1.0),
+            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
+            "bagging_freq": trial.suggest_int("bagging_freq", 1, 10),
+            "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+        }
+
+        train_data = lgb.Dataset(
+            np_X_train, label=np_y_train,
+            feature_name=FEATURE_NAMES, group=groups_train,
+            categorical_feature=cat_indices,
+        )
+        val_data = lgb.Dataset(
+            np_X_val, label=np_y_val,
+            feature_name=FEATURE_NAMES, group=groups_val,
+            reference=train_data,
+            categorical_feature=cat_indices,
+        )
+
+        callbacks = [
+            lgb.early_stopping(EARLY_STOPPING_ROUNDS),
+            lgb.log_evaluation(period=0),
+        ]
+
+        model = lgb.train(
+            params,
+            train_data,
+            num_boost_round=N_ESTIMATORS,
+            valid_sets=[val_data],
+            valid_names=["val"],
+            callbacks=callbacks,
+        )
+
+        # Evaluate hit_1st_rate (our actual KPI)
+        val_preds = model.predict(np_X_val)
+        metrics = _evaluate(y_val, val_preds)
+        return metrics.get("hit_1st_rate", 0.0)
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=n_trials, timeout=timeout)
+
+    best = study.best_params
+    best.update({
+        "objective": "lambdarank",
+        "metric": "ndcg",
+        "eval_at": [1, 3],
+        "verbose": -1,
+    })
+
+    log.info(
+        "Optuna best trial: hit_1st_rate=%.4f, params=%s",
+        study.best_value, study.best_params,
+    )
+
+    return best
+
+
 def train_model(
     X_train: list[list[float]],
     y_train: list[int],
@@ -159,8 +261,12 @@ def train_model(
     groups_val: list[int] | None = None,
     model_path: Path | None = None,
     meta_path: Path | None = None,
+    params: dict | None = None,
 ) -> dict:
     """Train a LightGBM LambdaRank model with probability calibration.
+
+    Args:
+        params: LightGBM parameters (e.g. from Optuna). Defaults to LGBM_PARAMS.
 
     Returns a dict of training metadata (metrics, data size, etc.).
     """
@@ -172,6 +278,8 @@ def train_model(
             "ML機能には lightgbm, numpy が必要です。\n"
             "pip install 'boatrace-ai[ml]' でインストールしてください。"
         )
+
+    lgbm_params = params or LGBM_PARAMS
 
     save_path = model_path or config.MODEL_PATH
     save_meta = meta_path or config.MODEL_META_PATH
@@ -186,14 +294,18 @@ def train_model(
     if groups_val is None:
         groups_val = [BOATS_PER_RACE] * (len(X_val) // BOATS_PER_RACE)
 
+    cat_indices = _get_categorical_indices()
+
     train_data = lgb.Dataset(
         np.array(X_train), label=np.array(y_train),
         feature_name=FEATURE_NAMES, group=groups_train,
+        categorical_feature=cat_indices,
     )
     val_data = lgb.Dataset(
         np.array(X_val), label=np.array(y_val),
         feature_name=FEATURE_NAMES, group=groups_val,
         reference=train_data,
+        categorical_feature=cat_indices,
     )
 
     callbacks = [
@@ -202,7 +314,7 @@ def train_model(
     ]
 
     model = lgb.train(
-        LGBM_PARAMS,
+        lgbm_params,
         train_data,
         num_boost_round=N_ESTIMATORS,
         valid_sets=[val_data],
@@ -225,6 +337,10 @@ def train_model(
         calibrator_path.write_bytes(pickle.dumps(calibrator))
         log.info("Calibrator saved to %s", calibrator_path)
 
+    # Calibration quality metrics
+    cal_metrics = _evaluate_calibration(y_val, val_preds, calibrator)
+    metrics.update(cal_metrics)
+
     # Save metadata
     meta = {
         "trained_at": date.today().isoformat(),
@@ -236,6 +352,7 @@ def train_model(
         "metrics": metrics,
         "objective": "lambdarank",
         "has_calibrator": calibrator is not None,
+        "params": {k: v for k, v in lgbm_params.items() if k != "verbose"},
     }
     save_meta.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
 
@@ -278,13 +395,70 @@ def _fit_calibrator(y_val: list[int], raw_scores, num_boats: int = BOATS_PER_RAC
     return calibrator
 
 
+def _evaluate_calibration(
+    y_val: list[int], raw_scores, calibrator=None, num_boats: int = BOATS_PER_RACE
+) -> dict:
+    """Compute calibration quality metrics: Brier Score and ECE.
+
+    Returns dict with brier_score and ece (Expected Calibration Error).
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return {}
+
+    raw = np.array(raw_scores)
+    num_rows = len(raw)
+    if num_rows % num_boats != 0 or num_rows == 0:
+        return {}
+
+    num_races = num_rows // num_boats
+    raw_matrix = raw.reshape(num_races, num_boats)
+
+    # Softmax
+    exp_scores = np.exp(raw_matrix - raw_matrix.max(axis=1, keepdims=True))
+    probs = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+
+    # Apply calibrator if available
+    if calibrator is not None:
+        flat_probs = calibrator.predict(probs.ravel())
+        probs = flat_probs.reshape(num_races, num_boats)
+        # Re-normalize per race
+        probs = probs / probs.sum(axis=1, keepdims=True)
+
+    # Binary labels (1st place)
+    y_arr = np.array(y_val).reshape(num_races, num_boats)
+    binary = (y_arr == y_arr.max(axis=1, keepdims=True)).astype(float)
+
+    # Brier Score (lower is better)
+    brier = float(np.mean((probs.ravel() - binary.ravel()) ** 2))
+
+    # Expected Calibration Error (10 bins)
+    n_bins = 10
+    flat_probs = probs.ravel()
+    flat_labels = binary.ravel()
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    for i in range(n_bins):
+        mask = (flat_probs >= bin_edges[i]) & (flat_probs < bin_edges[i + 1])
+        if mask.sum() == 0:
+            continue
+        bin_acc = flat_labels[mask].mean()
+        bin_conf = flat_probs[mask].mean()
+        ece += (mask.sum() / len(flat_probs)) * abs(bin_acc - bin_conf)
+
+    return {
+        "brier_score": round(brier, 4),
+        "ece": round(float(ece), 4),
+    }
+
+
 def _evaluate(y_true: list[int], y_pred, num_boats: int = BOATS_PER_RACE) -> dict:
     """Evaluate predictions at the race level.
 
     Computes:
     - hit_1st_rate: Rate at which the highest-scored boat actually won.
     - hit_top2_rate: Rate at which winner is in top-2 predicted.
-    - ndcg@1, ndcg@3: Normalized Discounted Cumulative Gain.
     """
     import numpy as np
 

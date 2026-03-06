@@ -137,7 +137,7 @@ def test_build_dataset_produces_correct_shape() -> None:
 
     assert len(X) == 12  # 2 races x 6 boats
     assert len(y) == 12
-    assert all(len(row) == 29 for row in X)  # 29 features
+    assert all(len(row) == 35 for row in X)  # 35 features
     assert groups == [6, 6]  # 2 races with 6 boats each
 
 

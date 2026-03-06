@@ -142,6 +142,48 @@ def _predict_raw(
     return predicted_order, norm_probs
 
 
+ODDS_BLEND_ALPHA = 0.7  # weight for model probability (0.3 for odds-implied)
+
+
+def _blend_with_odds(
+    norm_probs: dict[int, float],
+    odds_win: dict[int, float],
+    alpha: float = ODDS_BLEND_ALPHA,
+) -> dict[int, float]:
+    """Blend model probabilities with odds-implied probabilities.
+
+    odds_implied_prob = 1/odds (normalized to sum to ~1 accounting for overround).
+    final_prob = alpha * model_prob + (1-alpha) * odds_implied_prob
+    """
+    # Convert odds to implied probabilities
+    implied: dict[int, float] = {}
+    for boat_num, odds in odds_win.items():
+        if odds > 0:
+            implied[boat_num] = 1.0 / odds
+
+    if not implied:
+        return norm_probs
+
+    # Normalize implied probabilities (remove overround)
+    total_implied = sum(implied.values())
+    if total_implied > 0:
+        implied = {bn: p / total_implied for bn, p in implied.items()}
+
+    # Blend
+    blended: dict[int, float] = {}
+    for bn in norm_probs:
+        model_p = norm_probs[bn]
+        odds_p = implied.get(bn, model_p)  # fallback to model if odds missing
+        blended[bn] = alpha * model_p + (1 - alpha) * odds_p
+
+    # Re-normalize
+    total = sum(blended.values())
+    if total > 0:
+        blended = {bn: p / total for bn, p in blended.items()}
+
+    return blended
+
+
 def _build_prediction(
     race: RaceProgram,
     predicted_order: list[int],
@@ -149,6 +191,14 @@ def _build_prediction(
     odds_data: OddsData | None,
 ) -> PredictionResult:
     """Core prediction logic: confidence, bets, analysis → PredictionResult."""
+    # Blend model probabilities with odds if available
+    if odds_data is not None and odds_data.win:
+        blended_probs = _blend_with_odds(norm_probs, odds_data.win)
+        # Re-sort by blended probabilities
+        sorted_boats = sorted(blended_probs.items(), key=lambda x: x[1], reverse=True)
+        predicted_order = [bn for bn, _ in sorted_boats]
+        norm_probs = blended_probs
+
     top_prob = norm_probs[predicted_order[0]]
     confidence = min(max(top_prob, 0.1), 0.95)
 

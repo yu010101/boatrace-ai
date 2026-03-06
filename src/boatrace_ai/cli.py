@@ -299,25 +299,32 @@ async def _predict_single(stadium: int, race_num: int, date_str: str | None, mod
 @cli.command("train")
 @click.option("--days", "-d", default=365, type=click.IntRange(7, 730), help="訓練データ日数 (default: 365)")
 @click.option("--val-days", default=14, type=click.IntRange(1, 90), help="バリデーション日数 (default: 14)")
-def train_cmd(days: int, val_days: int) -> None:
+@click.option("--tune/--no-tune", default=True, help="Optunaでハイパーパラメータを最適化 (default: on)")
+@click.option("--tune-trials", default=50, type=click.IntRange(10, 200), help="Optuna試行回数 (default: 50)")
+def train_cmd(days: int, val_days: int, tune: bool, tune_trials: int) -> None:
     """MLモデルを訓練"""
-    asyncio.run(_train(days, val_days))
+    asyncio.run(_train(days, val_days, tune, tune_trials))
 
 
-async def _train(days: int, val_days: int) -> None:
+async def _train(days: int, val_days: int, tune: bool = True, tune_trials: int = 50) -> None:
     try:
         from boatrace_ai.ml.training import (
             build_dataset,
             collect_training_data,
             time_series_split,
             train_model,
+            tune_hyperparams,
         )
     except ImportError as e:
         display_error(str(e))
         return
 
     console.print(f"\n[bold]ML モデル訓練開始[/bold]")
-    console.print(f"  データ期間: 過去 {days} 日 / バリデーション: {val_days} 日\n")
+    console.print(f"  データ期間: 過去 {days} 日 / バリデーション: {val_days} 日")
+    if tune:
+        console.print(f"  Optuna HPO: {tune_trials} trials\n")
+    else:
+        console.print()
 
     # Step 1: Collect data
     try:
@@ -351,10 +358,29 @@ async def _train(days: int, val_days: int) -> None:
 
     console.print(f"  特徴量抽出完了: 訓練 {len(X_train)} 行 / 検証 {len(X_val)} 行")
 
+    # Step 3.5: Optuna HPO
+    best_params = None
+    if tune:
+        try:
+            with console.status(f"[bold green]Optuna HPO ({tune_trials} trials)..."):
+                best_params = tune_hyperparams(
+                    X_train, y_train, X_val, y_val,
+                    groups_train, groups_val,
+                    n_trials=tune_trials,
+                )
+            console.print(f"  [green]HPO完了[/green]: num_leaves={best_params.get('num_leaves')}, "
+                          f"lr={best_params.get('learning_rate', 0):.4f}")
+        except Exception as e:
+            console.print(f"  [yellow]HPO失敗（デフォルトパラメータで続行）: {e}[/yellow]")
+
     # Step 4: Train
     try:
         with console.status("[bold green]LightGBM LambdaRank 訓練中..."):
-            meta = train_model(X_train, y_train, X_val, y_val, groups_train, groups_val)
+            meta = train_model(
+                X_train, y_train, X_val, y_val,
+                groups_train, groups_val,
+                params=best_params,
+            )
     except Exception as e:
         display_error(f"訓練に失敗: {e}")
         return

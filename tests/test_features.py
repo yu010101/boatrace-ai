@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from boatrace_ai.data.models import ProgramsResponse
-from boatrace_ai.ml.features import FEATURE_NAMES, extract_features
+from boatrace_ai.ml.features import CATEGORICAL_FEATURES, FEATURE_NAMES, extract_features
 
 
 def test_extract_features_returns_6_rows(programs_json: dict) -> None:
@@ -151,4 +151,38 @@ def test_extract_features_stadium_and_grade(programs_json: dict) -> None:
 
 
 def test_feature_names_count() -> None:
-    assert len(FEATURE_NAMES) == 29
+    assert len(FEATURE_NAMES) == 35
+
+
+def test_categorical_features_in_feature_names() -> None:
+    for name in CATEGORICAL_FEATURES:
+        assert name in FEATURE_NAMES
+
+
+def test_pairwise_features(programs_json: dict) -> None:
+    resp = ProgramsResponse.model_validate(programs_json)
+    race = resp.programs[0]
+
+    features = extract_features(race)
+
+    # Inner boat (boat 1) should have diff = 0 for inner_* features
+    boat1 = [f for f in features if f["boat_number"] == 1.0][0]
+    assert boat1["inner_national_top1_diff"] == 0.0
+    assert boat1["inner_motor_top2_diff"] == 0.0
+    assert boat1["is_inner_boat"] == 1.0
+
+    # Other boats should have is_inner_boat = 0
+    boat2 = [f for f in features if f["boat_number"] == 2.0][0]
+    assert boat2["is_inner_boat"] == 0.0
+
+
+def test_stadium_inner_win_rate(programs_json: dict) -> None:
+    resp = ProgramsResponse.model_validate(programs_json)
+    race = resp.programs[0]
+
+    features = extract_features(race)
+
+    # All boats in same race should have same stadium_inner_win_rate
+    rates = [f["stadium_inner_win_rate"] for f in features]
+    assert len(set(rates)) == 1
+    assert 0.0 < rates[0] < 1.0

@@ -8,13 +8,18 @@ from pathlib import Path
 from boatrace_ai.data.models import PredictionResult, ProgramsResponse
 from boatrace_ai.publish.article import (
     DISCLAIMER,
+    MEMBERSHIP_UPSELL,
     _build_accuracy_html,
     _build_accuracy_markdown,
     _build_hashtags,
     _build_html,
     _build_markdown,
+    _build_related_articles,
     generate_accuracy_report,
     generate_article,
+    generate_membership_article,
+    generate_midday_report,
+    generate_track_record_article,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -393,4 +398,192 @@ class TestGenerateAccuracyReport:
         _, _, hashtags = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "AI予測" in hashtags
         assert "水理AI" in hashtags
-        assert "競艇" in hashtags
+
+
+# ── Hashtag article_type ─────────────────────────────────────
+
+
+class TestHashtagsByArticleType:
+    def test_prediction_type(self) -> None:
+        tags = _build_hashtags(article_type="prediction")
+        assert "競艇予想" in tags
+        assert "無料予想" in tags
+
+    def test_results_type(self) -> None:
+        tags = _build_hashtags(article_type="results")
+        assert "競艇結果" in tags
+        assert "的中" in tags
+
+    def test_track_record_type(self) -> None:
+        tags = _build_hashtags(article_type="track_record")
+        assert "競艇実績" in tags
+        assert "回収率推移" in tags
+
+    def test_midday_type(self) -> None:
+        tags = _build_hashtags(article_type="midday")
+        assert "競艇速報" in tags
+        assert "午前結果" in tags
+
+    def test_max_8_tags(self) -> None:
+        race = _load_race()
+        tags = _build_hashtags(race, venue_names=["桐生", "戸田", "江戸川"], article_type="prediction")
+        assert len(tags) <= 8
+
+
+# ── Related articles ──────────────────────────────────────────
+
+
+class TestBuildRelatedArticles:
+    def test_builds_links(self) -> None:
+        links = {
+            "grades": {"note_url": "https://note.com/suiri_ai/n/abc", "title": "grades"},
+            "results": {"note_url": "https://note.com/suiri_ai/n/def", "title": "results"},
+        }
+        html = _build_related_articles("midday", links)
+        assert "関連記事" in html
+        assert "https://note.com/suiri_ai/n/abc" in html
+        assert "https://note.com/suiri_ai/n/def" in html
+
+    def test_excludes_current_type(self) -> None:
+        links = {
+            "grades": {"note_url": "https://note.com/suiri_ai/n/abc", "title": "grades"},
+        }
+        html = _build_related_articles("grades", links)
+        assert html == ""
+
+    def test_empty_links(self) -> None:
+        html = _build_related_articles("midday", {})
+        assert html == ""
+
+
+# ── Track record article ─────────────────────────────────────
+
+
+def _make_accuracy_trend() -> list[dict]:
+    return [
+        {"date": "2026-03-05", "total": 132, "hit_1st": 74, "hit_1st_rate": 0.56, "hit_tri": 3, "hit_tri_rate": 0.02},
+        {"date": "2026-03-04", "total": 130, "hit_1st": 68, "hit_1st_rate": 0.52, "hit_tri": 2, "hit_tri_rate": 0.015},
+        {"date": "2026-03-03", "total": 128, "hit_1st": 65, "hit_1st_rate": 0.51, "hit_tri": 1, "hit_tri_rate": 0.008},
+    ]
+
+
+def _make_roi_trend() -> list[dict]:
+    return [
+        {"date": "2026-03-05", "bets": 20, "invested": 20000, "payout": 17800, "roi": 0.89},
+        {"date": "2026-03-04", "bets": 18, "invested": 18000, "payout": 13500, "roi": 0.75},
+    ]
+
+
+class TestTrackRecordArticle:
+    def test_returns_tuple_of_three(self) -> None:
+        result = generate_track_record_article(
+            _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_title_contains_keywords(self) -> None:
+        title, _, _ = generate_track_record_article(
+            _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
+        )
+        assert "水理AI" in title
+        assert "実績" in title
+
+    def test_html_contains_summary(self) -> None:
+        _, html, _ = generate_track_record_article(
+            _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
+        )
+        assert "サマリー" in html
+        assert "日別実績" in html
+        assert "1着" in html
+
+    def test_html_no_h1_no_table(self) -> None:
+        _, html, _ = generate_track_record_article(
+            _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
+        )
+        assert "<h1>" not in html
+        assert "<table>" not in html
+
+    def test_html_contains_membership_upsell(self) -> None:
+        _, html, _ = generate_track_record_article(
+            _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
+        )
+        assert "メンバーシップ" in html
+
+    def test_hashtags_are_track_record_type(self) -> None:
+        _, _, hashtags = generate_track_record_article(
+            _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
+        )
+        assert "競艇実績" in hashtags
+
+
+# ── Midday report ─────────────────────────────────────────────
+
+
+class TestMiddayReport:
+    def test_returns_tuple_of_three(self) -> None:
+        result = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_title_contains_keywords(self) -> None:
+        title, _, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert "午前" in title
+        assert "水理AI" in title
+        assert "3/1" in title
+
+    def test_html_contains_summary(self) -> None:
+        _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert "午前の部 結果速報" in html
+        assert "1着的中" in html
+
+    def test_html_contains_highlight(self) -> None:
+        _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert "午前のハイライト" in html
+        assert "3連単的中!" in html
+
+    def test_html_no_pay_tag(self) -> None:
+        _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert "<pay>" not in html
+
+    def test_hashtags_are_midday_type(self) -> None:
+        _, _, hashtags = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert "競艇速報" in hashtags
+
+
+# ── Membership article ────────────────────────────────────────
+
+
+class TestMembershipArticle:
+    def test_returns_tuple_of_three(self) -> None:
+        result = generate_membership_article(_make_stats())
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_title_contains_keywords(self) -> None:
+        title, _, _ = generate_membership_article(_make_stats())
+        assert "メンバーシップ" in title
+        assert "水理AI" in title
+
+    def test_html_contains_benefits(self) -> None:
+        _, html, _ = generate_membership_article(_make_stats())
+        assert "メンバー特典" in html
+        assert "月額¥1,000" in html
+        assert "Sランク" in html
+
+    def test_html_contains_track_record(self) -> None:
+        _, html, _ = generate_membership_article(_make_stats())
+        assert "累計実績" in html
+
+    def test_html_no_pay_tag(self) -> None:
+        _, html, _ = generate_membership_article(_make_stats())
+        assert "<pay>" not in html
+
+
+# ── Accuracy report includes membership upsell ───────────────
+
+
+class TestAccuracyReportMembershipUpsell:
+    def test_accuracy_html_includes_membership(self) -> None:
+        html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
+        assert "メンバーシップ" in html

@@ -1073,7 +1073,7 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
     # Match S-rank grades to programs
     s_keys = {(g["stadium_number"], g["race_number"]) for g in s_grades}
     races = [
-        r for r in programs
+        r for r in programs.programs
         if (r.race_stadium_number, r.race_number) in s_keys
     ]
 

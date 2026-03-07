@@ -232,6 +232,28 @@ async def _predict_today(stadium: int | None, dry_run: bool, mode: str = "auto")
             console.print(f"  {s} {race.race_number}R {race.race_subtitle}")
         return
 
+    # Validate feature count before running predictions
+    if mode in ("ml", "auto") and config.MODEL_PATH.exists():
+        try:
+            from boatrace_ai.ml.features import FEATURE_NAMES
+            from boatrace_ai.ml.model import load_model
+
+            model = load_model()
+            model_n_features = model.num_feature()
+            code_n_features = len(FEATURE_NAMES)
+            if model_n_features != code_n_features:
+                display_error(
+                    f"特徴量数の不一致: モデルは {model_n_features} 特徴量で学習されましたが、"
+                    f"現在のコードは {code_n_features} 特徴量を生成します。\n"
+                    f"'boatrace train' を実行してモデルを再学習してください。"
+                )
+                return
+        except FileNotFoundError:
+            pass  # Model not found — will be handled later in prediction flow
+        except Exception as e:
+            display_error(f"モデルの特徴量チェックに失敗: {e}")
+            return
+
     for i, race in enumerate(races, 1):
         s = STADIUMS.get(race.race_stadium_number, "?")
         display_progress(i, total, f"{s} {race.race_number}R 予測中...")
@@ -1098,45 +1120,53 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
     success = 0
     failed = 0
 
-    for i, race in enumerate(races, 1):
-        s = STADIUMS.get(race.race_stadium_number, "?")
-        label = f"{s} {race.race_number}R"
+    # Open shared browser for batch publishing (reused across all articles)
+    if note_client is not None:
+        await note_client.open_browser()
 
-        display_progress(i, total, f"{label} 予測中...")
-        odds_data = None
-        if config.MODEL_PATH.exists():
-            odds_data = await _fetch_odds_safe(race)
-        try:
-            prediction = await predict_race_auto(race, mode="ml", odds_data=odds_data)
-        except Exception as e:
-            display_error(f"{label} の予測に失敗: {e}")
-            failed += 1
-            continue
+    try:
+        for i, race in enumerate(races, 1):
+            s = STADIUMS.get(race.race_stadium_number, "?")
+            label = f"{s} {race.race_number}R"
 
-        title, html_body, hashtags = generate_article(
-            race, prediction, grade="S",
-        )
+            display_progress(i, total, f"{label} 予測中...")
+            odds_data = None
+            if config.MODEL_PATH.exists():
+                odds_data = await _fetch_odds_safe(race)
+            try:
+                prediction = await predict_race_auto(race, mode="ml", odds_data=odds_data)
+            except Exception as e:
+                display_error(f"{label} の予測に失敗: {e}")
+                failed += 1
+                continue
 
-        if dry_run:
-            md_text = _build_markdown(race, prediction, grade="S")
-            display_article_preview(title, md_text)
-            success += 1
-            continue
-
-        display_publish_progress(i, total, title)
-        try:
-            result = await note_client.create_and_publish(
-                title, html_body, price=config.NOTE_ARTICLE_PRICE, hashtags=hashtags
+            title, html_body, hashtags = generate_article(
+                race, prediction, grade="S",
             )
-            url = result.get("note_url", "")
-            display_publish_result(title, url, config.NOTE_ARTICLE_PRICE)
-            success += 1
-        except Exception as e:
-            display_error(f"{label} の投稿に失敗: {e}")
-            failed += 1
 
-        if i < total:
-            await asyncio.sleep(config.NOTE_PUBLISH_INTERVAL)
+            if dry_run:
+                md_text = _build_markdown(race, prediction, grade="S")
+                display_article_preview(title, md_text)
+                success += 1
+                continue
+
+            display_publish_progress(i, total, title)
+            try:
+                result = await note_client.create_and_publish(
+                    title, html_body, price=config.NOTE_ARTICLE_PRICE, hashtags=hashtags
+                )
+                url = result.get("note_url", "")
+                display_publish_result(title, url, config.NOTE_ARTICLE_PRICE)
+                success += 1
+            except Exception as e:
+                display_error(f"{label} の投稿に失敗: {e}")
+                failed += 1
+
+            if i < total:
+                await asyncio.sleep(config.NOTE_PUBLISH_INTERVAL)
+    finally:
+        if note_client is not None:
+            await note_client.close_browser()
 
     display_publish_summary(success, failed, total)
 

@@ -69,6 +69,56 @@ class NoteClient:
         self._session_path = session_path or config.NOTE_SESSION_PATH
         self._cookies: dict[str, str] = {}
         self._xsrf_token: str = ""
+        # Shared browser lifecycle (optional, for batch publishing)
+        self._playwright: object | None = None
+        self._browser: object | None = None
+        self._browser_context: object | None = None
+
+    async def open_browser(self) -> None:
+        """Launch a shared Playwright browser for reuse across multiple publishes."""
+        if self._browser_context is not None:
+            return  # Already open
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise NotePublishError("playwright が必要です")
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+        )
+        self._browser_context = await self._browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": 1280, "height": 800},
+            locale="ja-JP",
+        )
+        # Set cookies for authentication
+        if self._cookies:
+            cookie_list = [
+                {"name": name, "value": value, "domain": ".note.com", "path": "/"}
+                for name, value in self._cookies.items()
+            ]
+            await self._browser_context.add_cookies(cookie_list)
+        log.info("Shared browser opened for batch publishing")
+
+    async def close_browser(self) -> None:
+        """Close the shared Playwright browser."""
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+            self._browser_context = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
+        log.info("Shared browser closed")
+
+    async def __aenter__(self) -> "NoteClient":
+        await self.open_browser()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.close_browser()
 
     def _save_session(self) -> None:
         """Persist session cookies to disk."""
@@ -303,131 +353,144 @@ class NoteClient:
         Returns:
             Dict with publish result info.
         """
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError:
-            raise NotePublishError("playwright が必要です")
-
         editor_url = f"{NOTE_EDITOR_BASE}/notes/{draft_key}/edit/"
         log.info("Opening editor: %s", editor_url)
 
         result: dict[str, object] = {}
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
+        # Decide whether to use the shared browser or launch a standalone one
+        shared = self._browser_context is not None
+        context = self._browser_context
+        standalone_pw = None
+        standalone_browser = None
+
+        if not shared:
+            try:
+                from playwright.async_api import async_playwright
+            except ImportError:
+                raise NotePublishError("playwright が必要です")
+
+            standalone_pw = await async_playwright().start()
+            standalone_browser = await standalone_pw.chromium.launch(
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
             )
+            context = await standalone_browser.new_context(
+                user_agent=USER_AGENT,
+                viewport={"width": 1280, "height": 800},
+                locale="ja-JP",
+            )
+            # Set cookies for authentication
+            cookie_list = [
+                {"name": name, "value": value, "domain": ".note.com", "path": "/"}
+                for name, value in self._cookies.items()
+            ]
+            await context.add_cookies(cookie_list)
+
+        try:
+            page = await context.new_page()
+
+            # Capture publish API responses
+            publish_response: dict = {}
+
+            async def on_response(response):
+                url = response.url
+                if "/api/" in url and ("text_notes" in url or "notes" in url):
+                    method = response.request.method
+                    status = response.status
+                    if method in ("PUT", "POST") and status in (200, 201):
+                        try:
+                            body = await response.json()
+                            publish_response["status"] = status
+                            publish_response["data"] = body
+                            publish_response["url"] = url
+                        except Exception:
+                            pass
+
+            page.on("response", on_response)
+
+            # Navigate to editor
+            await page.goto(editor_url)
+            await asyncio.sleep(3)
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(3)
+
+            # Verify editor loaded (ProseMirror contenteditable div)
             try:
-                context = await browser.new_context(
-                    user_agent=USER_AGENT,
-                    viewport={"width": 1280, "height": 800},
-                    locale="ja-JP",
+                await page.wait_for_selector(EDITOR_BODY_SELECTOR, timeout=15000)
+            except Exception:
+                raise NotePublishError(
+                    "エディタが読み込めませんでした。セッションが無効かもしれません。"
                 )
 
-                # Set cookies for authentication
-                cookie_list = [
-                    {"name": name, "value": value, "domain": ".note.com", "path": "/"}
-                    for name, value in self._cookies.items()
-                ]
-                await context.add_cookies(cookie_list)
+            log.info("Editor loaded with content")
 
-                page = await context.new_page()
-
-                # Capture publish API responses
-                publish_response: dict = {}
-
-                async def on_response(response):
-                    url = response.url
-                    if "/api/" in url and ("text_notes" in url or "notes" in url):
-                        method = response.request.method
-                        status = response.status
-                        if method in ("PUT", "POST") and status in (200, 201):
-                            try:
-                                body = await response.json()
-                                publish_response["status"] = status
-                                publish_response["data"] = body
-                                publish_response["url"] = url
-                            except Exception:
-                                pass
-
-                page.on("response", on_response)
-
-                # Navigate to editor
-                await page.goto(editor_url)
-                await asyncio.sleep(3)
-                await page.wait_for_load_state("networkidle")
-                await asyncio.sleep(3)
-
-                # Verify editor loaded (ProseMirror contenteditable div)
-                try:
-                    await page.wait_for_selector(EDITOR_BODY_SELECTOR, timeout=15000)
-                except Exception:
-                    raise NotePublishError(
-                        "エディタが読み込めませんでした。セッションが無効かもしれません。"
-                    )
-
-                log.info("Editor loaded with content")
-
-                # Step 1: Click "公開に進む" button (in editor header)
-                publish_btn = await self._find_button(
-                    page, ["公開に進む", "公開設定", "公開"]
+            # Step 1: Click "公開に進む" button (in editor header)
+            publish_btn = await self._find_button(
+                page, ["公開に進む", "公開設定", "公開"]
+            )
+            if not publish_btn:
+                raise NotePublishError(
+                    "公開ボタンが見つかりませんでした。エディタUIが変更された可能性があります。"
                 )
-                if not publish_btn:
-                    raise NotePublishError(
-                        "公開ボタンが見つかりませんでした。エディタUIが変更された可能性があります。"
-                    )
 
-                await publish_btn.click()
-                await asyncio.sleep(3)
-                await page.wait_for_load_state("networkidle")
-                await asyncio.sleep(2)
-                log.info("Navigated to publish page: %s", page.url)
+            await publish_btn.click()
+            await asyncio.sleep(3)
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)
+            log.info("Navigated to publish page: %s", page.url)
 
-                # Step 2: Set hashtags on publish settings page
-                if hashtags:
-                    await self._set_hashtags(page, hashtags)
+            # Step 2: Set hashtags on publish settings page
+            if hashtags:
+                await self._set_hashtags(page, hashtags)
 
-                # Step 3: Set paid article settings if price > 0
-                if price > 0:
-                    await self._set_paid_settings(page, price)
+            # Step 3: Set paid article settings if price > 0
+            if price > 0:
+                await self._set_paid_settings(page, price)
 
-                # Step 4: Click "投稿する" button (final publish)
-                final_btn = await self._find_button(
-                    page, ["投稿する", "投稿", "公開する", "公開"]
+            # Step 4: Click "投稿する" button (final publish)
+            final_btn = await self._find_button(
+                page, ["投稿する", "投稿", "公開する", "公開"]
+            )
+            if not final_btn:
+                raise NotePublishError(
+                    "投稿ボタンが見つかりませんでした。公開設定UIが変更された可能性があります。"
                 )
-                if not final_btn:
-                    raise NotePublishError(
-                        "投稿ボタンが見つかりませんでした。公開設定UIが変更された可能性があります。"
-                    )
 
-                await final_btn.click()
-                await asyncio.sleep(5)
-                log.info("Final publish clicked. URL: %s", page.url)
+            await final_btn.click()
+            await asyncio.sleep(5)
+            log.info("Final publish clicked. URL: %s", page.url)
 
-                # Extract result from PUT response
-                result["draft_key"] = draft_key
-                if publish_response:
-                    result["api_response"] = publish_response
-                    # Extract user urlname from PUT response to build note URL
-                    put_data = publish_response.get("data", {})
-                    if isinstance(put_data, dict):
-                        data_inner = put_data.get("data", put_data)
-                        user = data_inner.get("user", {})
-                        urlname = user.get("urlname", "")
-                        key = data_inner.get("key", draft_key)
-                        if urlname:
-                            result["note_url"] = f"{NOTE_BASE_URL}/{urlname}/n/{key}"
-                        else:
-                            result["note_url"] = f"{NOTE_BASE_URL}/n/{key}"
+            # Extract result from PUT response
+            result["draft_key"] = draft_key
+            if publish_response:
+                result["api_response"] = publish_response
+                # Extract user urlname from PUT response to build note URL
+                put_data = publish_response.get("data", {})
+                if isinstance(put_data, dict):
+                    data_inner = put_data.get("data", put_data)
+                    user = data_inner.get("user", {})
+                    urlname = user.get("urlname", "")
+                    key = data_inner.get("key", draft_key)
+                    if urlname:
+                        result["note_url"] = f"{NOTE_BASE_URL}/{urlname}/n/{key}"
+                    else:
+                        result["note_url"] = f"{NOTE_BASE_URL}/n/{key}"
 
-                if "note_url" not in result:
-                    result["note_url"] = f"{NOTE_BASE_URL}/n/{draft_key}"
+            if "note_url" not in result:
+                result["note_url"] = f"{NOTE_BASE_URL}/n/{draft_key}"
 
-                log.info("Publish complete. note_url=%s", result.get("note_url"))
+            log.info("Publish complete. note_url=%s", result.get("note_url"))
 
-            finally:
-                await browser.close()
+            # Close the page to free resources (but keep context alive for shared mode)
+            await page.close()
+
+        finally:
+            if not shared:
+                if standalone_browser is not None:
+                    await standalone_browser.close()
+                if standalone_pw is not None:
+                    await standalone_pw.stop()
 
         return result
 

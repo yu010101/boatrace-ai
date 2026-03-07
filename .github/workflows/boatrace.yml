@@ -74,6 +74,8 @@ jobs:
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
         run: boatrace publish premium
+        timeout-minutes: 20
+        continue-on-error: true
 
       - name: Tweet morning prediction
         env:

@@ -3,6 +3,13 @@
 AI（Claude API + LightGBM）を使ったボートレース予想システム。
 ML予測 → 推奨度スコアリング → note.com有料記事 → X自動投稿の一気通貫パイプライン。
 
+## アカウント
+
+| プラットフォーム | ユーザー名 | URL |
+|-----------------|-----------|-----|
+| note | suiri_ai | https://note.com/suiri_ai |
+| X (Twitter) | @suiri_ai | https://x.com/suiri_ai |
+
 ## セットアップ
 
 ```bash

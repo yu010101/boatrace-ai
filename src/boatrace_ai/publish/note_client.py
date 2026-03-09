@@ -543,27 +543,26 @@ class NoteClient:
         We locate it and set the file directly.
         """
         try:
-            # note.com uses an input[type=file] for eyecatch upload
-            file_input = page.locator('input[type="file"][accept*="image"]').first
-            if await file_input.count() > 0:
-                await file_input.set_input_files(str(eyecatch_path))
+            # Debug: log page URL and take screenshot for diagnostics
+            log.info("Setting eyecatch on page: %s", page.url)
+
+            # Try all file inputs on the page (note.com may hide them)
+            all_file_inputs = page.locator('input[type="file"]')
+            count = await all_file_inputs.count()
+            log.info("Found %d file input(s) on page", count)
+
+            if count > 0:
+                # Use the first file input found
+                await all_file_inputs.first.set_input_files(str(eyecatch_path))
                 await asyncio.sleep(3)  # Wait for upload to complete
-                log.info("Eyecatch image set: %s", eyecatch_path.name)
-            else:
-                # Fallback: try clicking the eyecatch area to trigger file input
-                eyecatch_area = page.locator('[class*="eyecatch"], [class*="Eyecatch"]').first
-                if await eyecatch_area.count() > 0:
-                    await eyecatch_area.click()
-                    await asyncio.sleep(1)
-                    file_input = page.locator('input[type="file"]').first
-                    if await file_input.count() > 0:
-                        await file_input.set_input_files(str(eyecatch_path))
-                        await asyncio.sleep(3)
-                        log.info("Eyecatch image set via fallback: %s", eyecatch_path.name)
-                    else:
-                        log.warning("アイキャッチのfile inputが見つかりません")
-                else:
-                    log.warning("アイキャッチエリアが見つかりません")
+                log.info("Eyecatch image set via file input: %s", eyecatch_path.name)
+                return
+
+            # No file input found — log page HTML hints for debugging
+            html_snippet = await page.evaluate(
+                "() => document.body.innerHTML.substring(0, 2000)"
+            )
+            log.warning("file inputが見つかりません。ページHTML先頭: %s", html_snippet[:500])
         except Exception as e:
             log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)
 

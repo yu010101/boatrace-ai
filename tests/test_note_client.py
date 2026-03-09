@@ -283,7 +283,10 @@ class TestCreateAndPublish:
             assert result["draft_key"] == "nabc123"
 
             mock_create.assert_called_once()
-            mock_save.assert_called_once_with(12345, "Test Article", "<h1>Test</h1><pay><p>Paid</p>", ["test"])
+            mock_save.assert_called_once_with(
+                12345, "Test Article", "<h1>Test</h1><pay><p>Paid</p>", ["test"],
+                eyecatch_src=None,
+            )
             mock_publish.assert_called_once_with("nabc123", 300, ["test"])
 
     @pytest.mark.asyncio
@@ -312,7 +315,9 @@ class TestCreateAndPublish:
         ):
             await client.create_and_publish("Title", "<p>Body</p>")
 
-            mock_save.assert_called_once_with(1, "Title", "<p>Body</p>", None)
+            mock_save.assert_called_once_with(
+                1, "Title", "<p>Body</p>", None, eyecatch_src=None,
+            )
 
     @pytest.mark.asyncio
     async def test_publish_draft_create_fails(self, client: NoteClient) -> None:

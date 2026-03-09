@@ -104,6 +104,8 @@ class TestPublishCommands:
             patch("boatrace_ai.cli.fetch_programs", new_callable=AsyncMock, return_value=programs),
             patch("boatrace_ai.cli.predict_race_auto", new_callable=AsyncMock, return_value=prediction),
             patch("boatrace_ai.cli.save_prediction"),
+            patch("boatrace_ai.cli._fetch_odds_safe", new_callable=AsyncMock, return_value=None),
+            patch("boatrace_ai.cli._try_grade_and_save", return_value=None),
         ):
             result = runner.invoke(cli, ["publish", "race", "-s", "1", "-r", "1", "--dry-run"])
             assert result.exit_code == 0
@@ -129,6 +131,7 @@ class TestPublishCommands:
         with (
             patch("boatrace_ai.cli.fetch_programs", new_callable=AsyncMock, return_value=programs),
             patch("boatrace_ai.cli.predict_race_auto", new_callable=AsyncMock, side_effect=Exception("AI error")),
+            patch("boatrace_ai.cli._fetch_odds_safe", new_callable=AsyncMock, return_value=None),
         ):
             result = runner.invoke(cli, ["publish", "race", "-s", "1", "-r", "1", "--dry-run"])
             assert result.exit_code == 0
@@ -148,6 +151,8 @@ class TestPublishCommands:
             patch("boatrace_ai.cli.predict_race_auto", new_callable=AsyncMock, return_value=prediction),
             patch("boatrace_ai.cli.save_prediction"),
             patch("boatrace_ai.cli.NoteClient", return_value=mock_note),
+            patch("boatrace_ai.cli._fetch_odds_safe", new_callable=AsyncMock, return_value=None),
+            patch("boatrace_ai.cli._try_grade_and_save", return_value=None),
         ):
             result = runner.invoke(cli, ["publish", "race", "-s", "1", "-r", "1"])
             assert result.exit_code == 0
@@ -165,6 +170,8 @@ class TestPublishCommands:
             patch("boatrace_ai.cli.fetch_programs", new_callable=AsyncMock, return_value=programs),
             patch("boatrace_ai.cli.predict_race_auto", new_callable=AsyncMock, return_value=prediction),
             patch("boatrace_ai.cli.save_prediction"),
+            patch("boatrace_ai.cli._fetch_odds_safe", new_callable=AsyncMock, return_value=None),
+            patch("boatrace_ai.cli._try_grade_and_save", return_value=None),
         ):
             result = runner.invoke(cli, ["publish", "today", "-s", "1", "--dry-run"])
             assert result.exit_code == 0
@@ -207,6 +214,8 @@ class TestPublishCommands:
             patch("boatrace_ai.cli.fetch_programs", new_callable=AsyncMock, return_value=programs),
             patch("boatrace_ai.cli.predict_race_auto", new_callable=AsyncMock, return_value=prediction),
             patch("boatrace_ai.cli.save_prediction"),
+            patch("boatrace_ai.cli._fetch_odds_safe", new_callable=AsyncMock, return_value=None),
+            patch("boatrace_ai.cli._try_grade_and_save", return_value=None),
         ):
             result = runner.invoke(cli, ["publish", "today", "-s", "1", "--dry-run", "--free"])
             assert result.exit_code == 0
@@ -223,6 +232,8 @@ class TestPublishCommands:
             patch("boatrace_ai.cli.fetch_programs", new_callable=AsyncMock, return_value=programs),
             patch("boatrace_ai.cli.predict_race_auto", new_callable=AsyncMock, return_value=prediction),
             patch("boatrace_ai.cli.save_prediction"),
+            patch("boatrace_ai.cli._fetch_odds_safe", new_callable=AsyncMock, return_value=None),
+            patch("boatrace_ai.cli._try_grade_and_save", return_value=None),
         ):
             result = runner.invoke(cli, ["publish", "today", "-s", "1", "--dry-run", "--free"])
             assert result.exit_code == 0

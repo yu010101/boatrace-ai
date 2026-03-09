@@ -843,7 +843,8 @@ async def _publish_today(
         price = 0 if free else config.NOTE_ARTICLE_PRICE
         try:
             result = await note_client.create_and_publish(
-                title, html_body, price=price, hashtags=hashtags
+                title, html_body, price=price, hashtags=hashtags,
+                eyecatch_title=title, article_type="prediction",
             )
             url = result.get("note_url", "")
             display_publish_result(title, url, price)
@@ -926,7 +927,8 @@ async def _publish_race(stadium: int, race_num: int, date_str: str | None, dry_r
             await note_client.ensure_logged_in()
         with console.status("[bold green]記事を投稿中..."):
             result = await note_client.create_and_publish(
-                title, html_body, hashtags=hashtags
+                title, html_body, hashtags=hashtags,
+                eyecatch_title=title, article_type="prediction",
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, config.NOTE_ARTICLE_PRICE)
@@ -1002,7 +1004,8 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
             await note_client.ensure_logged_in()
         with console.status("[bold green]的中レポートを投稿中..."):
             result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags
+                title, html_body, price=0, hashtags=hashtags,
+                eyecatch_title=title, article_type="results",
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)
@@ -1055,7 +1058,8 @@ async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) 
             await note_client.ensure_logged_in()
         with console.status("[bold green]推奨度記事を投稿中..."):
             result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags
+                title, html_body, price=0, hashtags=hashtags,
+                eyecatch_title=title, article_type="grades",
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)
@@ -1153,7 +1157,8 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
             display_publish_progress(i, total, title)
             try:
                 result = await note_client.create_and_publish(
-                    title, html_body, price=config.NOTE_ARTICLE_PRICE, hashtags=hashtags
+                    title, html_body, price=config.NOTE_ARTICLE_PRICE, hashtags=hashtags,
+                    eyecatch_title=title, article_type="prediction",
                 )
                 url = result.get("note_url", "")
                 display_publish_result(title, url, config.NOTE_ARTICLE_PRICE)
@@ -1214,7 +1219,8 @@ async def _publish_track_record(days: int, dry_run: bool) -> None:
             await note_client.ensure_logged_in()
         with console.status("[bold green]実績レポートを投稿中..."):
             result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags
+                title, html_body, price=0, hashtags=hashtags,
+                eyecatch_title=title, article_type="track_record",
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)
@@ -1281,7 +1287,8 @@ async def _publish_midday(date_str: str | None, dry_run: bool) -> None:
             await note_client.ensure_logged_in()
         with console.status("[bold green]中間速報を投稿中..."):
             result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags
+                title, html_body, price=0, hashtags=hashtags,
+                eyecatch_title=title, article_type="midday",
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)
@@ -1316,7 +1323,8 @@ async def _publish_membership(dry_run: bool) -> None:
             await note_client.ensure_logged_in()
         with console.status("[bold green]メンバーシップ記事を投稿中..."):
             result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags
+                title, html_body, price=0, hashtags=hashtags,
+                eyecatch_title=title, article_type="membership",
             )
         url = result.get("note_url", "")
         display_publish_result(title, url, 0)

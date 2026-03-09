@@ -324,7 +324,7 @@ class TestAccuracyReportHtml:
 
     def test_contains_hit_rates(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "1着的中: 2/3 (66%)" in html
+        assert "1着的中: 2/3 (67%)" in html
         assert "3連単的中: 1/3 (33%)" in html
 
     def test_contains_highlight_section(self) -> None:
@@ -363,7 +363,7 @@ class TestAccuracyReportMarkdown:
 
     def test_contains_hit_rates(self) -> None:
         md = _build_accuracy_markdown("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "1着的中: 2/3 (66%)" in md
+        assert "1着的中: 2/3 (67%)" in md
         assert "3連単的中: 1/3 (33%)" in md
 
     def test_contains_highlight_and_hit_list(self) -> None:

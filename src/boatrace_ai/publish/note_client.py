@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 NOTE_BASE_URL = "https://note.com"
 NOTE_EDITOR_BASE = "https://editor.note.com"
 NOTE_API_URL = f"{NOTE_BASE_URL}/api/v1/text_notes"
+NOTE_UPLOAD_URL = f"{NOTE_BASE_URL}/api/v1/uploads/image"
 NOTE_LOGIN_URL = f"{NOTE_BASE_URL}/login"
 
 # Confirmed login form selectors (verified from NoteClient OSS project)
@@ -283,6 +284,42 @@ class NoteClient:
         log.info("Session invalid or missing, logging in...")
         await self.login()
 
+    async def upload_image(self, image_path: Path) -> str:
+        """Upload image to note.com and return the image URL.
+
+        Args:
+            image_path: Path to the image file to upload.
+
+        Returns:
+            The URL of the uploaded image.
+
+        Raises:
+            NotePublishError: If upload fails.
+        """
+        if not image_path.exists():
+            raise NotePublishError(f"画像ファイルが見つかりません: {image_path}")
+
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            with open(image_path, "rb") as f:
+                files = {"file": (image_path.name, f, "image/png")}
+                headers = {"X-Requested-With": "XMLHttpRequest"}
+                resp = await client.post(
+                    NOTE_UPLOAD_URL,
+                    files=files,
+                    cookies=self._cookies,
+                    headers=headers,
+                )
+            if resp.status_code not in (200, 201):
+                raise NotePublishError(
+                    f"画像アップロードに失敗しました (HTTP {resp.status_code}): {resp.text[:200]}"
+                )
+            data = resp.json().get("data", {})
+            image_url = data.get("url") or data.get("src") or ""
+            if not image_url:
+                raise NotePublishError(f"画像URLの取得に失敗しました: {data}")
+            log.info("Image uploaded: %s", image_url)
+            return image_url
+
     async def _create_draft(self) -> dict:
         """Create a new draft article via API.
 
@@ -314,6 +351,7 @@ class NoteClient:
         title: str,
         html_body: str,
         hashtags: list[str] | None = None,
+        eyecatch_src: str | None = None,
     ) -> None:
         """Save content to draft via draft_save API."""
         payload: dict[str, object] = {
@@ -322,6 +360,8 @@ class NoteClient:
         }
         if hashtags:
             payload["hashtags"] = hashtags
+        if eyecatch_src:
+            payload["eyecatch_src"] = eyecatch_src
 
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
             resp = await client.post(
@@ -619,6 +659,8 @@ class NoteClient:
         html_body: str,
         price: int | None = None,
         hashtags: list[str] | None = None,
+        eyecatch_title: str | None = None,
+        article_type: str | None = None,
     ) -> dict:
         """Create and publish a paid article on note.com.
 
@@ -631,6 +673,10 @@ class NoteClient:
             html_body: HTML body content (with <pay> tag for paid section)
             price: Price in JPY (default: config.NOTE_ARTICLE_PRICE)
             hashtags: List of hashtag strings
+            eyecatch_title: Title text for the OGP eyecatch image.
+                If provided, an eyecatch image is generated and uploaded.
+            article_type: Article type for eyecatch icon
+                (prediction, grades, results, midday, track_record, membership).
 
         Returns:
             Dict containing publish result info.
@@ -643,11 +689,20 @@ class NoteClient:
 
         log.info("Publishing article: %s (¥%d)", title, price)
 
+        # Step 0: Generate and upload eyecatch image (optional, best-effort)
+        eyecatch_src: str | None = None
+        if eyecatch_title:
+            eyecatch_src = await self._generate_and_upload_eyecatch(
+                eyecatch_title, article_type or "prediction"
+            )
+
         # Step 1: Create draft via API
         draft = await self._create_draft()
 
-        # Step 2: Save content via API
-        await self._save_draft_content(draft["id"], title, html_body, hashtags)
+        # Step 2: Save content via API (with eyecatch if available)
+        await self._save_draft_content(
+            draft["id"], title, html_body, hashtags, eyecatch_src=eyecatch_src
+        )
 
         # Step 3: Publish via Playwright editor
         try:
@@ -660,6 +715,34 @@ class NoteClient:
             ) from e
 
         return result
+
+    async def _generate_and_upload_eyecatch(
+        self, eyecatch_title: str, article_type: str
+    ) -> str | None:
+        """Generate an eyecatch image and upload it to note.com.
+
+        Returns the image URL or None if generation/upload fails.
+        Failures are logged but do not raise exceptions.
+        """
+        try:
+            from boatrace_ai.publish.eyecatch import generate_eyecatch
+
+            image_path = await generate_eyecatch(eyecatch_title, article_type)
+            if image_path is None:
+                return None
+            try:
+                image_url = await self.upload_image(image_path)
+                return image_url
+            finally:
+                # Clean up temp file
+                try:
+                    image_path.unlink(missing_ok=True)
+                    image_path.parent.rmdir()
+                except OSError:
+                    pass
+        except Exception as e:
+            log.warning("アイキャッチ画像の生成/アップロードに失敗（記事投稿は続行）: %s", e)
+            return None
 
     async def get_status(self) -> dict[str, object]:
         """Check login status and return session info."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from boatrace_ai import config
 from boatrace_ai.data.constants import RACER_CLASSES, STADIUMS
 from boatrace_ai.data.models import PredictionResult, RaceProgram
 
@@ -68,8 +69,8 @@ def _build_track_record(stats: dict) -> str:
     total = stats.get("total_races", 0)
     if total == 0:
         return ""
-    hit_1st_pct = int(stats["hit_1st_rate"] * 100)
-    hit_tri_pct = int(stats["hit_trifecta_rate"] * 100)
+    hit_1st_pct = round(stats["hit_1st_rate"] * 100)
+    hit_tri_pct = round(stats["hit_trifecta_rate"] * 100)
     return (
         "<h3>累計実績</h3>"
         f"<p><strong>総予測: {total:,}レース | "
@@ -124,7 +125,7 @@ def _build_html(
     stadium = STADIUMS.get(race.race_stadium_number, f"場{race.race_stadium_number}")
     boat_map = {b.racer_boat_number: b for b in race.boats}
     top3 = prediction.predicted_order[:3]
-    confidence_pct = int(prediction.confidence * 100)
+    confidence_pct = round(prediction.confidence * 100)
 
     parts: list[str] = []
 
@@ -200,7 +201,7 @@ def _build_markdown(
     stadium = STADIUMS.get(race.race_stadium_number, f"場{race.race_stadium_number}")
     boat_map = {b.racer_boat_number: b for b in race.boats}
     top3 = prediction.predicted_order[:3]
-    confidence_pct = int(prediction.confidence * 100)
+    confidence_pct = round(prediction.confidence * 100)
 
     lines: list[str] = []
 
@@ -299,8 +300,8 @@ def _build_accuracy_html(
     total = len(records)
     hit_1st = sum(1 for r in records if r["hit_1st"])
     hit_tri = sum(1 for r in records if r["hit_trifecta"])
-    hit_1st_pct = int(hit_1st / total * 100) if total else 0
-    hit_tri_pct = int(hit_tri / total * 100) if total else 0
+    hit_1st_pct = round(hit_1st / total * 100) if total else 0
+    hit_tri_pct = round(hit_tri / total * 100) if total else 0
 
     venue_names = _venue_names_from_records(records)
     num_venues = len(venue_names)
@@ -317,7 +318,7 @@ def _build_accuracy_html(
 
     # ROI for the day
     if roi_stats and roi_stats.get("total_bets", 0) > 0:
-        roi_pct = int(roi_stats["roi"] * 100)
+        roi_pct = round(roi_stats["roi"] * 100)
         profit = roi_stats["profit"]
         parts.append(
             f"<p>本日ROI: {roi_pct}%"
@@ -367,7 +368,7 @@ def _build_accuracy_html(
         "フォローすると最新記事の通知が届きます。</p>"
     )
 
-    parts.append(MEMBERSHIP_UPSELL)
+    parts.append(_membership_upsell())
 
     # Footer
     parts.append(ABOUT_SUIRI_AI)
@@ -387,8 +388,8 @@ def _build_accuracy_markdown(
     total = len(records)
     hit_1st = sum(1 for r in records if r["hit_1st"])
     hit_tri = sum(1 for r in records if r["hit_trifecta"])
-    hit_1st_pct = int(hit_1st / total * 100) if total else 0
-    hit_tri_pct = int(hit_tri / total * 100) if total else 0
+    hit_1st_pct = round(hit_1st / total * 100) if total else 0
+    hit_tri_pct = round(hit_tri / total * 100) if total else 0
 
     lines: list[str] = []
 
@@ -401,7 +402,7 @@ def _build_accuracy_markdown(
     lines.append("")
 
     if roi_stats and roi_stats.get("total_bets", 0) > 0:
-        roi_pct = int(roi_stats["roi"] * 100)
+        roi_pct = round(roi_stats["roi"] * 100)
         profit = roi_stats["profit"]
         lines.append(
             f"本日ROI: {roi_pct}%"
@@ -445,8 +446,8 @@ def _build_accuracy_markdown(
     lines.append("### 累計実績")
     lines.append("")
     cum_total = stats["total_races"]
-    cum_1st_pct = int(stats["hit_1st_rate"] * 100)
-    cum_tri_pct = int(stats["hit_trifecta_rate"] * 100)
+    cum_1st_pct = round(stats["hit_1st_rate"] * 100)
+    cum_tri_pct = round(stats["hit_trifecta_rate"] * 100)
     lines.append(
         f"総予測: {cum_total:,}レース | "
         f"1着的中率: {cum_1st_pct}% | "
@@ -481,7 +482,7 @@ def generate_accuracy_report(
     """
     total = len(records)
     hit_1st = sum(1 for r in records if r["hit_1st"])
-    hit_1st_pct = int(hit_1st / total * 100) if total else 0
+    hit_1st_pct = round(hit_1st / total * 100) if total else 0
 
     venue_names = _venue_names_from_records(records)
     venue_str = _format_venue_list(venue_names)
@@ -528,7 +529,7 @@ def generate_grade_summary_article(
 
     # Build title: competitor-beating format with venue names and free marker
     if stats and stats.get("total_races", 0) > 0:
-        hit_1st_pct = int(stats["hit_1st_rate"] * 100)
+        hit_1st_pct = round(stats["hit_1st_rate"] * 100)
         title = (
             f"競艇AI予想｜{venue_str}全{num_venues}場"
             f"【全レース1着予測無料】的中率{hit_1st_pct}% {date_short} — 水理AI"
@@ -549,8 +550,8 @@ def generate_grade_summary_article(
         f"Sランク（高確信）{s_count}レース、Aランク{a_count}レースを検出しました。</p>"
     )
     if stats and stats.get("total_races", 0) > 0:
-        hit_1st_pct = int(stats["hit_1st_rate"] * 100)
-        hit_tri_pct = int(stats["hit_trifecta_rate"] * 100)
+        hit_1st_pct = round(stats["hit_1st_rate"] * 100)
+        hit_tri_pct = round(stats["hit_trifecta_rate"] * 100)
         parts.append(
             f"<p><strong>直近の実績: 1着的中率 {hit_1st_pct}% / "
             f"3連単的中率 {hit_tri_pct}%</strong></p>"
@@ -568,7 +569,7 @@ def generate_grade_summary_article(
         parts.append("<p>本日最も確信度が高いレースをピックアップ。</p>")
         for g in top3:
             stadium = STADIUMS.get(g["stadium_number"], str(g["stadium_number"]))
-            prob_pct = int(g["top1_prob"] * 100)
+            prob_pct = round(g["top1_prob"] * 100)
             # Include predicted 1st boat if available
             pred_text = ""
             if predictions:
@@ -603,7 +604,7 @@ def generate_grade_summary_article(
         for venue, venue_grades in sorted(by_venue.items()):
             race_parts = []
             for g in sorted(venue_grades, key=lambda x: x["race_number"]):
-                prob_pct = int(g["top1_prob"] * 100)
+                prob_pct = round(g["top1_prob"] * 100)
                 # Show ◎○△ predictions if available
                 if predictions:
                     order = predictions.get((g["stadium_number"], g["race_number"]))
@@ -631,7 +632,7 @@ def generate_grade_summary_article(
         if track_record:
             parts.append(track_record)
 
-    parts.append(MEMBERSHIP_UPSELL)
+    parts.append(_membership_upsell())
 
     # Footer
     parts.append(ABOUT_SUIRI_AI)
@@ -671,12 +672,20 @@ def _build_related_articles(current_type: str, links: dict[str, dict]) -> str:
 # ── Membership upsell ─────────────────────────────────────────
 
 
-MEMBERSHIP_UPSELL = (
-    "<h3>メンバーシップのご案内</h3>"
-    "<p>毎朝のSランク詳細予測・買い目を月額制でお届け。"
-    "<strong>月額¥1,000</strong>（1日約¥33）。"
-    "詳しくは水理AIのプロフィールから。</p>"
-)
+def _membership_upsell() -> str:
+    """Build membership upsell HTML with config-driven price."""
+    price = config.NOTE_MEMBERSHIP_PRICE
+    daily = round(price / 30)
+    return (
+        "<h3>メンバーシップのご案内</h3>"
+        f"<p>毎朝のSランク詳細予測・買い目を月額制でお届け。"
+        f"<strong>月額¥{price:,}</strong>（1日約¥{daily}）。"
+        f"詳しくは水理AIのプロフィールから。</p>"
+    )
+
+
+# Keep backward-compatible constant for existing imports
+MEMBERSHIP_UPSELL = _membership_upsell()
 
 
 # ── Track record article (weekly) ────────────────────────────
@@ -697,12 +706,12 @@ def generate_track_record_article(
         related_links: Optional dict of article_type -> {note_url, title}
     """
     total = stats.get("total_races", 0)
-    hit_1st_pct = int(stats["hit_1st_rate"] * 100) if total > 0 else 0
+    hit_1st_pct = round(stats["hit_1st_rate"] * 100) if total > 0 else 0
     roi_pct = 0
     if roi_trend:
         total_invested = sum(r["invested"] for r in roi_trend)
         total_payout = sum(r["payout"] for r in roi_trend)
-        roi_pct = int(total_payout / total_invested * 100) if total_invested > 0 else 0
+        roi_pct = round(total_payout / total_invested * 100) if total_invested > 0 else 0
 
     title = f"競艇AI実績｜直近30日の的中率・ROI推移【全データ公開】 — 水理AI"
 
@@ -720,8 +729,8 @@ def generate_track_record_article(
     total_races_30d = sum(r["total"] for r in accuracy_trend)
     hit_1st_30d = sum(r["hit_1st"] for r in accuracy_trend)
     hit_tri_30d = sum(r["hit_tri"] for r in accuracy_trend)
-    rate_1st = int(hit_1st_30d / total_races_30d * 100) if total_races_30d > 0 else 0
-    rate_tri = int(hit_tri_30d / total_races_30d * 100) if total_races_30d > 0 else 0
+    rate_1st = round(hit_1st_30d / total_races_30d * 100) if total_races_30d > 0 else 0
+    rate_tri = round(hit_tri_30d / total_races_30d * 100) if total_races_30d > 0 else 0
     parts.append(
         f"<p><strong>総予測: {total_races_30d}レース | "
         f"1着的中率: {rate_1st}% | 3連単的中率: {rate_tri}% | ROI: {roi_pct}%</strong></p>"
@@ -732,10 +741,10 @@ def generate_track_record_article(
     for acc in accuracy_trend[:7]:
         d = acc["date"]
         date_short = _format_date_short(d)
-        pct = int(acc["hit_1st_rate"] * 100)
+        pct = round(acc["hit_1st_rate"] * 100)
         # Find matching ROI
         roi_day = next((r for r in roi_trend if r["date"] == d), None)
-        roi_label = f" / ROI {int(roi_day['roi'] * 100)}%" if roi_day else ""
+        roi_label = f" / ROI {round(roi_day['roi'] * 100)}%" if roi_day else ""
         parts.append(
             f"<p><strong>{date_short}</strong>: "
             f"{acc['total']}R → 1着{acc['hit_1st']}的中({pct}%){roi_label}</p>"
@@ -753,12 +762,12 @@ def generate_track_record_article(
         direction = "改善" if diff >= 0 else "低下"
         parts.append("<h3>トレンド分析</h3>")
         parts.append(
-            f"<p>直近7日 vs 前7日: 1着的中率 {int(recent_rate)}% → {int(prev_rate)}%"
+            f"<p>前7日 → 直近7日: 1着的中率 {round(prev_rate)}% → {round(recent_rate)}%"
             f"（{diff:+.0f}pt {direction}）</p>"
         )
 
     # Membership upsell
-    parts.append(MEMBERSHIP_UPSELL)
+    parts.append(_membership_upsell())
 
     # Related articles
     if related_links:
@@ -794,7 +803,7 @@ def generate_midday_report(
     total = len(records)
     hit_1st = sum(1 for r in records if r["hit_1st"])
     hit_tri = sum(1 for r in records if r["hit_trifecta"])
-    hit_1st_pct = int(hit_1st / total * 100) if total else 0
+    hit_1st_pct = round(hit_1st / total * 100) if total else 0
 
     venue_names = _venue_names_from_records(records)
     venue_str = _format_venue_list(venue_names)
@@ -874,7 +883,7 @@ def generate_membership_article(
     parts.append("<h3>メンバー特典</h3>")
     parts.append(
         "<ul>"
-        "<li>毎朝Sランク全レースの詳細買い目（通常¥300/記事）</li>"
+        f"<li>毎朝Sランク全レースの詳細買い目（通常¥{config.NOTE_ARTICLE_PRICE}/記事）</li>"
         "<li>週次実績レポート</li>"
         "<li>優先お知らせ配信</li>"
         "</ul>"
@@ -882,7 +891,7 @@ def generate_membership_article(
 
     parts.append("<h3>料金</h3>")
     parts.append(
-        "<p><strong>月額¥1,000</strong>（競合の1/3の価格。1日約¥33）</p>"
+        f"<p><strong>月額¥{config.NOTE_MEMBERSHIP_PRICE:,}</strong>（1日約¥{round(config.NOTE_MEMBERSHIP_PRICE / 30)}）</p>"
     )
 
     # Track record

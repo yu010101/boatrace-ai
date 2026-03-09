@@ -43,6 +43,7 @@ NOTE_EMAIL: str = os.environ.get("NOTE_EMAIL", "")
 NOTE_PASSWORD: str = os.environ.get("NOTE_PASSWORD", "")
 NOTE_USER_ID: str = os.environ.get("NOTE_USER_ID", "")
 NOTE_ARTICLE_PRICE: int = int(os.environ.get("NOTE_ARTICLE_PRICE", "300"))
+NOTE_MEMBERSHIP_PRICE: int = int(os.environ.get("NOTE_MEMBERSHIP_PRICE", "1000"))
 
 _default_session = Path.home() / ".boatrace-ai" / "note_session.json"
 NOTE_SESSION_PATH: Path = Path(os.environ.get("NOTE_SESSION_PATH", str(_default_session)))

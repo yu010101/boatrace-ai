@@ -285,9 +285,10 @@ class TestCreateAndPublish:
             mock_create.assert_called_once()
             mock_save.assert_called_once_with(
                 12345, "Test Article", "<h1>Test</h1><pay><p>Paid</p>", ["test"],
-                eyecatch_src=None,
             )
-            mock_publish.assert_called_once_with("nabc123", 300, ["test"])
+            mock_publish.assert_called_once_with(
+                "nabc123", 300, ["test"], eyecatch_path=None,
+            )
 
     @pytest.mark.asyncio
     async def test_publish_default_price(self, client: NoteClient) -> None:
@@ -302,7 +303,9 @@ class TestCreateAndPublish:
             await client.create_and_publish("Title", "<p>Body</p>")
 
             # Default price is 300 (from config), no hashtags
-            client._publish_via_editor.assert_called_once_with("nk1", 300, None)
+            client._publish_via_editor.assert_called_once_with(
+                "nk1", 300, None, eyecatch_path=None,
+            )
 
     @pytest.mark.asyncio
     async def test_publish_no_hashtags(self, client: NoteClient) -> None:
@@ -316,7 +319,7 @@ class TestCreateAndPublish:
             await client.create_and_publish("Title", "<p>Body</p>")
 
             mock_save.assert_called_once_with(
-                1, "Title", "<p>Body</p>", None, eyecatch_src=None,
+                1, "Title", "<p>Body</p>", None,
             )
 
     @pytest.mark.asyncio

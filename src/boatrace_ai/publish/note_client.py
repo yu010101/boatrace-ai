@@ -351,7 +351,6 @@ class NoteClient:
         title: str,
         html_body: str,
         hashtags: list[str] | None = None,
-        eyecatch_src: str | None = None,
     ) -> None:
         """Save content to draft via draft_save API."""
         payload: dict[str, object] = {
@@ -360,8 +359,6 @@ class NoteClient:
         }
         if hashtags:
             payload["hashtags"] = hashtags
-        if eyecatch_src:
-            payload["eyecatch_src"] = eyecatch_src
 
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
             resp = await client.post(
@@ -381,13 +378,14 @@ class NoteClient:
         draft_key: str,
         price: int,
         hashtags: list[str] | None = None,
+        eyecatch_path: Path | None = None,
     ) -> dict:
         """Publish a draft article using the Playwright editor.
 
         Flow (verified against live note.com):
         1. Open editor.note.com/notes/{key}/edit/
         2. Click "公開に進む" button → navigates to /notes/{key}/publish/
-        3. On publish settings page: set hashtags, set paid settings if price > 0
+        3. On publish settings page: set eyecatch, hashtags, paid settings
         4. Click "投稿する" button to finalize
 
         Returns:
@@ -480,15 +478,19 @@ class NoteClient:
             await asyncio.sleep(2)
             log.info("Navigated to publish page: %s", page.url)
 
-            # Step 2: Set hashtags on publish settings page
+            # Step 2: Set eyecatch image via file input
+            if eyecatch_path and eyecatch_path.exists():
+                await self._set_eyecatch(page, eyecatch_path)
+
+            # Step 3: Set hashtags on publish settings page
             if hashtags:
                 await self._set_hashtags(page, hashtags)
 
-            # Step 3: Set paid article settings if price > 0
+            # Step 4: Set paid article settings if price > 0
             if price > 0:
                 await self._set_paid_settings(page, price)
 
-            # Step 4: Click "投稿する" button (final publish)
+            # Step 5: Click "投稿する" button (final publish)
             final_btn = await self._find_button(
                 page, ["投稿する", "投稿", "公開する", "公開"]
             )
@@ -533,6 +535,37 @@ class NoteClient:
                     await standalone_pw.stop()
 
         return result
+
+    async def _set_eyecatch(self, page, eyecatch_path: Path) -> None:
+        """Set eyecatch image on the publish settings page via file input.
+
+        note.com's publish page has a hidden file input for the eyecatch image.
+        We locate it and set the file directly.
+        """
+        try:
+            # note.com uses an input[type=file] for eyecatch upload
+            file_input = page.locator('input[type="file"][accept*="image"]').first
+            if await file_input.count() > 0:
+                await file_input.set_input_files(str(eyecatch_path))
+                await asyncio.sleep(3)  # Wait for upload to complete
+                log.info("Eyecatch image set: %s", eyecatch_path.name)
+            else:
+                # Fallback: try clicking the eyecatch area to trigger file input
+                eyecatch_area = page.locator('[class*="eyecatch"], [class*="Eyecatch"]').first
+                if await eyecatch_area.count() > 0:
+                    await eyecatch_area.click()
+                    await asyncio.sleep(1)
+                    file_input = page.locator('input[type="file"]').first
+                    if await file_input.count() > 0:
+                        await file_input.set_input_files(str(eyecatch_path))
+                        await asyncio.sleep(3)
+                        log.info("Eyecatch image set via fallback: %s", eyecatch_path.name)
+                    else:
+                        log.warning("アイキャッチのfile inputが見つかりません")
+                else:
+                    log.warning("アイキャッチエリアが見つかりません")
+        except Exception as e:
+            log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)
 
     async def _find_button(self, page, text_options: list[str]):
         """Find a visible button by text content, trying multiple options."""
@@ -689,59 +722,58 @@ class NoteClient:
 
         log.info("Publishing article: %s (¥%d)", title, price)
 
-        # Step 0: Generate and upload eyecatch image (optional, best-effort)
-        eyecatch_src: str | None = None
+        # Step 0: Generate eyecatch image (optional, best-effort)
+        eyecatch_path: Path | None = None
         if eyecatch_title:
-            eyecatch_src = await self._generate_and_upload_eyecatch(
+            eyecatch_path = await self._generate_eyecatch_image(
                 eyecatch_title, article_type or "prediction"
             )
 
         # Step 1: Create draft via API
         draft = await self._create_draft()
 
-        # Step 2: Save content via API (with eyecatch if available)
+        # Step 2: Save content via API
         await self._save_draft_content(
-            draft["id"], title, html_body, hashtags, eyecatch_src=eyecatch_src
+            draft["id"], title, html_body, hashtags
         )
 
-        # Step 3: Publish via Playwright editor
+        # Step 3: Publish via Playwright editor (eyecatch set on publish page)
         try:
-            result = await self._publish_via_editor(draft["key"], price, hashtags)
+            result = await self._publish_via_editor(
+                draft["key"], price, hashtags, eyecatch_path=eyecatch_path
+            )
         except Exception as e:
             log.error("Playwright publish failed: %s", e)
             raise NotePublishError(
                 f"記事の公開に失敗しました: {e}\n"
                 f"下書きは保存されています (key={draft['key']})"
             ) from e
+        finally:
+            # Clean up eyecatch temp file
+            if eyecatch_path:
+                try:
+                    eyecatch_path.unlink(missing_ok=True)
+                    eyecatch_path.parent.rmdir()
+                except OSError:
+                    pass
 
         return result
 
-    async def _generate_and_upload_eyecatch(
+    async def _generate_eyecatch_image(
         self, eyecatch_title: str, article_type: str
-    ) -> str | None:
-        """Generate an eyecatch image and upload it to note.com.
+    ) -> Path | None:
+        """Generate an eyecatch image and return the file path.
 
-        Returns the image URL or None if generation/upload fails.
+        Returns the image path or None if generation fails.
         Failures are logged but do not raise exceptions.
         """
         try:
             from boatrace_ai.publish.eyecatch import generate_eyecatch
 
             image_path = await generate_eyecatch(eyecatch_title, article_type)
-            if image_path is None:
-                return None
-            try:
-                image_url = await self.upload_image(image_path)
-                return image_url
-            finally:
-                # Clean up temp file
-                try:
-                    image_path.unlink(missing_ok=True)
-                    image_path.parent.rmdir()
-                except OSError:
-                    pass
+            return image_path
         except Exception as e:
-            log.warning("アイキャッチ画像の生成/アップロードに失敗（記事投稿は続行）: %s", e)
+            log.warning("アイキャッチ画像の生成に失敗（記事投稿は続行）: %s", e)
             return None
 
     async def get_status(self) -> dict[str, object]:

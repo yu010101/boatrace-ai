@@ -297,9 +297,9 @@ def generate_article(
     """
     stadium = STADIUMS.get(race.race_stadium_number, f"場{race.race_stadium_number}")
     if grade:
-        title = f"【推奨度{grade}】{stadium}競艇 {race.race_number}R 予想｜AI予測 {race.race_date} — 水理AI"
+        title = f"【推奨度{grade}】{stadium}競艇 {race.race_number}R 予想｜AI予測 {race.race_date}"
     else:
-        title = f"{stadium}競艇 {race.race_number}R 予想｜AI予測 {race.race_date} — 水理AI"
+        title = f"{stadium}競艇 {race.race_number}R 予想｜AI予測 {race.race_date}"
 
     html_body = _build_html(race, prediction, free=free, grade=grade)
     hashtags = _build_hashtags(race, article_type="prediction")
@@ -538,7 +538,7 @@ def generate_accuracy_report(
 
     title = (
         f"競艇AI予想 結果｜{venue_str}全{num_venues}場"
-        f"【的中率{hit_1st_pct}%】{date_short} — 水理AI"
+        f"【的中率{hit_1st_pct}%】{date_short}"
     )
     html_body = _build_accuracy_html(
         race_date, records, stats, roi_stats=roi_stats, related_links=related_links
@@ -557,6 +557,7 @@ def generate_grade_summary_article(
     grades: list[dict],
     stats: dict | None = None,
     predictions: dict[tuple[int, int], list[int]] | None = None,
+    related_links: dict[str, dict] | None = None,
 ) -> tuple[str, str, list[str]]:
     """Generate a free article listing all race grades with 1st-place predictions.
 
@@ -581,12 +582,12 @@ def generate_grade_summary_article(
         hit_1st_pct = round(stats["hit_1st_rate"] * 100)
         title = (
             f"競艇AI予想｜{venue_str}全{num_venues}場"
-            f"【全レース1着予測無料】的中率{hit_1st_pct}% {date_short} — 水理AI"
+            f"【全レース1着予測無料】的中率{hit_1st_pct}% {date_short}"
         )
     else:
         title = (
             f"競艇AI予想｜{venue_str}全{num_venues}場"
-            f"【全レース1着予測無料】{date_short} — 水理AI"
+            f"【全レース1着予測無料】{date_short}"
         )
 
     parts: list[str] = []
@@ -729,6 +730,12 @@ def generate_grade_summary_article(
 
     parts.append(_membership_upsell())
 
+    # Related articles
+    if related_links:
+        related = _build_related_articles("grades", related_links)
+        if related:
+            parts.append(related)
+
     # Footer
     parts.append(ABOUT_SUIRI_AI)
     parts.append("<h3>注意事項</h3>")
@@ -811,7 +818,7 @@ def generate_track_record_article(
         total_payout = sum(r["payout"] for r in roi_trend)
         roi_pct = round(total_payout / total_invested * 100) if total_invested > 0 else 0
 
-    title = f"競艇AI実績｜直近30日の的中率・ROI推移【全データ公開】 — 水理AI"
+    title = f"競艇AI実績｜直近30日の的中率・ROI推移【全データ公開】"
 
     parts: list[str] = []
 
@@ -909,7 +916,7 @@ def generate_midday_report(
 
     title = (
         f"競艇AI予想 午前の結果速報｜{venue_str}"
-        f"【的中率{hit_1st_pct}%】{date_short} — 水理AI"
+        f"【的中率{hit_1st_pct}%】{date_short}"
     )
 
     parts: list[str] = []

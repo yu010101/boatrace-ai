@@ -772,6 +772,19 @@ class NoteClient:
                 eyecatch_title, article_type or "prediction"
             )
 
+        # Step 0.5: Upload eyecatch via API and embed in HTML as fallback
+        # note.com uses the first image in the article body as OGP if no eyecatch is set
+        if eyecatch_path:
+            try:
+                eyecatch_url = await self.upload_image(eyecatch_path)
+                html_body = (
+                    f'<p><img src="{eyecatch_url}" alt="{eyecatch_title}"></p>\n'
+                    + html_body
+                )
+                log.info("Eyecatch embedded in HTML body: %s", eyecatch_url)
+            except Exception as e:
+                log.warning("アイキャッチ画像のアップロードに失敗: %s", e)
+
         # Step 1: Create draft via API
         draft = await self._create_draft()
 

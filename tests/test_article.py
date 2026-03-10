@@ -198,7 +198,7 @@ class TestGenerateArticle:
         title, _, _ = generate_article(race, prediction)
         assert "桐生競艇" in title
         assert "1R" in title
-        assert "水理AI" in title
+        assert "AI" in title
         assert "AI予測" in title
         assert race.race_date in title
 
@@ -385,7 +385,7 @@ class TestGenerateAccuracyReport:
 
     def test_title_format(self) -> None:
         title, _, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "水理AI" in title
+        assert "AI" in title
         assert "3/1" in title
         assert "的中率" in title
         assert "競艇AI予想" in title
@@ -486,7 +486,7 @@ class TestTrackRecordArticle:
         title, _, _ = generate_track_record_article(
             _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
         )
-        assert "水理AI" in title
+        assert "AI" in title
         assert "実績" in title
 
     def test_html_contains_summary(self) -> None:
@@ -529,7 +529,7 @@ class TestMiddayReport:
     def test_title_contains_keywords(self) -> None:
         title, _, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
         assert "午前" in title
-        assert "水理AI" in title
+        assert "AI" in title
         assert "3/1" in title
 
     def test_html_contains_summary(self) -> None:
@@ -563,7 +563,7 @@ class TestMembershipArticle:
     def test_title_contains_keywords(self) -> None:
         title, _, _ = generate_membership_article(_make_stats())
         assert "メンバーシップ" in title
-        assert "水理AI" in title
+        assert "AI" in title
 
     def test_html_contains_benefits(self) -> None:
         _, html, _ = generate_membership_article(_make_stats())

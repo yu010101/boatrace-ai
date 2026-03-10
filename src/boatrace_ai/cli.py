@@ -1042,8 +1042,10 @@ def publish_grades(date_str: str | None, dry_run: bool) -> None:
             pass
 
     stats = get_stats()
+    related_links = _get_related_links("results", "track_record", "midday")
     title, html_body, hashtags = generate_grade_summary_article(
         target_str, grades, stats=stats, predictions=predictions_map,
+        related_links=related_links,
     )
 
     if dry_run:

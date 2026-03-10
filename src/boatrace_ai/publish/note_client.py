@@ -540,9 +540,9 @@ class NoteClient:
         """Set eyecatch image by clicking the '画像を追加' button in the editor.
 
         note.com's editor flow:
-        1. Click button[aria-label="画像を追加"] → opens a dropdown/menu
-        2. Click the upload option in the menu → triggers native file chooser
-        3. Set file via file chooser
+        1. Click button[aria-label="画像を追加"] → file input appears
+        2. Set file via input[type="file"]
+        3. CropModal appears for cropping → click confirm button to apply
         """
         try:
             log.info("Setting eyecatch in editor: %s", page.url)
@@ -557,89 +557,75 @@ class NoteClient:
             await eyecatch_btn.first.click()
             await asyncio.sleep(2)
 
-            # Step 2: After clicking, a menu/section may appear.
-            # Look for upload-related options in the newly appeared UI.
-            # Try multiple strategies to find and click the upload trigger.
-
-            # Strategy A: Look for file input that appeared after click
+            # Step 2: Set image via file input
             file_inputs = page.locator('input[type="file"]')
             fi_count = await file_inputs.count()
             if fi_count > 0:
-                log.info("Found %d file input(s) after eyecatch button click", fi_count)
+                log.info("Found %d file input(s), setting image...", fi_count)
                 await file_inputs.first.set_input_files(str(eyecatch_path))
-                await asyncio.sleep(4)
-                log.info("Eyecatch set via file input: %s", eyecatch_path.name)
+                await asyncio.sleep(3)
+            else:
+                log.warning("File input not found after eyecatch button click")
                 return
 
-            # Strategy B: Find menu items with upload-related text
-            upload_keywords = ["アップロード", "ファイルを選択", "画像を選択", "選択"]
-            for keyword in upload_keywords:
-                items = page.locator(f"text={keyword}")
-                if await items.count() > 0:
-                    log.info("Found menu item '%s', clicking...", keyword)
-                    try:
-                        async with page.expect_file_chooser(timeout=5000) as fc_info:
-                            await items.first.click()
-                        file_chooser = await fc_info.value
-                        await file_chooser.set_files(str(eyecatch_path))
-                        await asyncio.sleep(4)
-                        log.info("Eyecatch set via menu '%s': %s", keyword, eyecatch_path.name)
-                        return
-                    except Exception as e:
-                        log.info("Menu item '%s' didn't trigger file chooser: %s", keyword, e)
+            # Step 3: Handle CropModal that appears after image upload
+            # note.com shows a React modal with class "CropModal__overlay"
+            # We need to find and click the confirm/apply button in the modal
+            await self._handle_crop_modal(page)
 
-            # Strategy C: Click any visible button/link in the popup area
-            # that might trigger file chooser
-            new_elements = await page.evaluate("""() => {
-                const results = [];
-                // Find recently appeared sections, menus, dialogs
-                for (const el of document.querySelectorAll('section, [role="menu"], [role="dialog"], [role="listbox"], div[class*="menu"], div[class*="popup"], div[class*="dropdown"], div[class*="modal"]')) {
-                    const rect = el.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {
-                        const text = el.textContent?.trim().substring(0, 200) || '';
-                        const tag = el.tagName;
-                        const cls = el.className?.toString().substring(0, 100) || '';
-                        results.push({tag, cls, text, top: rect.top, left: rect.left, w: rect.width, h: rect.height});
-                    }
-                }
-                return results;
-            }""")
-            log.info("Elements after eyecatch click: %s", json.dumps(new_elements, ensure_ascii=False)[:500])
-
-            # Strategy D: Look for clickable items inside any section/menu
-            for selector in ['section button', 'section a', 'section [role="menuitem"]',
-                             '[role="menu"] button', '[role="menu"] [role="menuitem"]',
-                             'div[class*="menu"] button']:
-                items = page.locator(selector)
-                count = await items.count()
-                if count > 0:
-                    for i in range(count):
-                        item = items.nth(i)
-                        if await item.is_visible():
-                            text = (await item.text_content() or "").strip()
-                            log.info("Trying menu item: selector=%s text='%s'", selector, text[:50])
-                            try:
-                                async with page.expect_file_chooser(timeout=3000) as fc_info:
-                                    await item.click()
-                                file_chooser = await fc_info.value
-                                await file_chooser.set_files(str(eyecatch_path))
-                                await asyncio.sleep(4)
-                                log.info("Eyecatch set via %s: %s", selector, eyecatch_path.name)
-                                return
-                            except Exception:
-                                pass
-                            # Check if file input appeared after this click
-                            fi_count = await file_inputs.count()
-                            if fi_count > 0:
-                                await file_inputs.first.set_input_files(str(eyecatch_path))
-                                await asyncio.sleep(4)
-                                log.info("Eyecatch set via file input after %s click", selector)
-                                return
-
-            log.warning("アイキャッチ設定失敗: ボタンクリック後のアップロードUIを検出できず")
+            log.info("Eyecatch image set: %s", eyecatch_path.name)
 
         except Exception as e:
             log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)
+
+    async def _handle_crop_modal(self, page) -> None:
+        """Handle the CropModal that appears after uploading an eyecatch image.
+
+        The modal has class 'CropModal__overlay' and contains confirm/apply buttons.
+        We click the confirm button to apply the crop and close the modal.
+        """
+        # Wait for crop modal to appear
+        modal = page.locator('.ReactModal__Overlay, [class*="CropModal"]')
+        try:
+            await modal.first.wait_for(state="visible", timeout=5000)
+            log.info("CropModal detected, looking for confirm button...")
+        except Exception:
+            log.info("No CropModal appeared, continuing...")
+            return
+
+        await asyncio.sleep(1)
+
+        # Try multiple button text options for the confirm button
+        confirm_texts = ["適用", "完了", "保存", "OK", "決定", "確定", "設定"]
+        for text in confirm_texts:
+            btn = page.locator(f'.ReactModal__Content button:has-text("{text}")')
+            if await btn.count() > 0 and await btn.first.is_visible():
+                log.info("Clicking CropModal confirm button: '%s'", text)
+                await btn.first.click()
+                await asyncio.sleep(2)
+                return
+
+        # Fallback: click any visible button inside the modal content
+        modal_buttons = page.locator('.ReactModal__Content button')
+        count = await modal_buttons.count()
+        log.info("CropModal has %d buttons", count)
+        for i in range(count):
+            btn = modal_buttons.nth(i)
+            if await btn.is_visible():
+                text = (await btn.text_content() or "").strip()
+                log.info("CropModal button[%d]: '%s'", i, text)
+                # Skip cancel/close buttons
+                if any(w in text for w in ["キャンセル", "閉じる", "戻る", "×"]):
+                    continue
+                log.info("Clicking CropModal button: '%s'", text)
+                await btn.first.click()
+                await asyncio.sleep(2)
+                return
+
+        # Last resort: press Escape to dismiss
+        log.warning("CropModal confirm button not found, pressing Escape")
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(1)
 
     async def _find_button(self, page, text_options: list[str]):
         """Find a visible button by text content, trying multiple options."""

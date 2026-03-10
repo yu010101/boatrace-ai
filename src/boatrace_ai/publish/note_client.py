@@ -614,30 +614,88 @@ class NoteClient:
             }""", image_b64)
             log.warning("[eyecatch] Interceptors installed (showOpenFilePicker + input.click)")
 
-            # Click the eyecatch button
-            await eyecatch_btn.first.click()
-            await asyncio.sleep(4)
+            # Probe the button's React component and click handlers
+            react_info = await page.evaluate("""() => {
+                const btn = document.querySelector('button[aria-label="画像を追加"]');
+                if (!btn) return {error: 'no button'};
+                const info = {visible: btn.offsetParent !== null, disabled: btn.disabled};
 
-            # Check which method was triggered
-            method = await page.evaluate("() => window.__eyecatchMethod")
-            log.warning("[eyecatch] Triggered method: %s", method)
+                // Traverse React fiber for onClick handlers
+                const fiberKey = Object.keys(btn).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+                if (fiberKey) {
+                    let fiber = btn[fiberKey];
+                    const handlers = [];
+                    let depth = 0;
+                    while (fiber && depth < 15) {
+                        const props = fiber.memoizedProps || fiber.pendingProps || {};
+                        if (props.onClick) {
+                            handlers.push({
+                                depth,
+                                type: typeof fiber.type === 'string' ? fiber.type : (fiber.type?.name || fiber.type?.displayName || 'Component'),
+                                onClick_str: props.onClick.toString().substring(0, 200),
+                            });
+                        }
+                        fiber = fiber.return;
+                        depth++;
+                    }
+                    info.handlers = handlers;
+                }
 
-            if method:
-                # Wait for upload to process
-                await asyncio.sleep(4)
+                // Check for event listeners via getEventListeners (Chrome DevTools only, may not work)
+                info.parentTag = btn.parentElement?.tagName;
+                info.parentClass = btn.parentElement?.className?.substring(0, 100);
 
-                # Handle CropModal if it appears
-                await self._handle_crop_modal(page)
-                log.warning("[eyecatch] Set via %s: %s", method, eyecatch_path.name)
-            else:
-                # Neither interceptor triggered - probe what happened
-                probe = await page.evaluate("""() => ({
-                    hasShowOpenFilePicker: typeof window.showOpenFilePicker === 'function',
-                    file_inputs: document.querySelectorAll('input[type="file"]').length,
+                return info;
+            }""")
+            log.warning("[eyecatch] React info: %s", json.dumps(react_info, ensure_ascii=False)[:600])
+
+            # Try multiple click approaches
+            click_methods = [
+                ("playwright_click", None),
+                ("force_click", None),
+                ("js_click", None),
+                ("js_dispatch", None),
+            ]
+
+            for method_name, _ in click_methods:
+                # Reset tracker
+                await page.evaluate("() => { window.__eyecatchMethod = null; }")
+
+                if method_name == "playwright_click":
+                    await eyecatch_btn.first.click()
+                elif method_name == "force_click":
+                    await eyecatch_btn.first.click(force=True)
+                elif method_name == "js_click":
+                    await page.evaluate("""() => {
+                        document.querySelector('button[aria-label="画像を追加"]').click();
+                    }""")
+                elif method_name == "js_dispatch":
+                    await page.evaluate("""() => {
+                        const btn = document.querySelector('button[aria-label="画像を追加"]');
+                        btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+                    }""")
+
+                await asyncio.sleep(3)
+                method = await page.evaluate("() => window.__eyecatchMethod")
+                log.warning("[eyecatch] %s → method=%s", method_name, method)
+
+                if method:
+                    await asyncio.sleep(4)
+                    await self._handle_crop_modal(page)
+                    log.warning("[eyecatch] Success via %s: %s", method_name, eyecatch_path.name)
+                    break
+
+                # Check for modals or file inputs that appeared
+                state = await page.evaluate("""() => ({
+                    fi: document.querySelectorAll('input[type="file"]').length,
                     modals: document.querySelectorAll('.ReactModal__Overlay').length,
+                    sections: document.querySelectorAll('section').length,
                 })""")
-                log.warning("[eyecatch] No method triggered. Probe: %s",
-                           json.dumps(probe, ensure_ascii=False))
+                if state.get("fi", 0) > 0 or state.get("modals", 0) > 0:
+                    log.warning("[eyecatch] %s produced state change: %s", method_name, state)
+                    break
+            else:
+                log.warning("[eyecatch] All click methods failed")
 
             # Cleanup
             await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")

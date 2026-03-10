@@ -553,19 +553,41 @@ class NoteClient:
                 log.warning("アイキャッチボタン(aria-label='画像を追加')が見つかりません")
                 return
 
-            log.info("Found eyecatch button, clicking...")
-            await eyecatch_btn.first.click()
-            await asyncio.sleep(2)
-
-            # Step 2: Set image via file input
-            file_inputs = page.locator('input[type="file"]')
-            fi_count = await file_inputs.count()
-            if fi_count > 0:
-                log.info("Found %d file input(s), setting image...", fi_count)
-                await file_inputs.first.set_input_files(str(eyecatch_path))
+            # Step 2: Click button and set file via file chooser or file input
+            # Try expect_file_chooser first (button may directly open native dialog)
+            log.info("Found eyecatch button, clicking with expect_file_chooser...")
+            image_set = False
+            try:
+                async with page.expect_file_chooser(timeout=5000) as fc_info:
+                    await eyecatch_btn.first.click()
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(str(eyecatch_path))
                 await asyncio.sleep(3)
-            else:
-                log.warning("File input not found after eyecatch button click")
+                image_set = True
+                log.info("Eyecatch set via file chooser")
+            except Exception as e:
+                log.info("File chooser not triggered: %s. Trying file input...", e)
+
+            # Fallback: look for file input (may appear after click)
+            if not image_set:
+                # Wait a bit more and retry - file input may appear with delay
+                for wait in (1, 2, 3):
+                    file_inputs = page.locator('input[type="file"]')
+                    fi_count = await file_inputs.count()
+                    if fi_count > 0:
+                        break
+                    await asyncio.sleep(wait)
+
+                if fi_count > 0:
+                    log.info("Found %d file input(s), setting image...", fi_count)
+                    await file_inputs.first.set_input_files(str(eyecatch_path))
+                    await asyncio.sleep(3)
+                    image_set = True
+                else:
+                    log.warning("File input not found after eyecatch button click")
+                    return
+
+            if not image_set:
                 return
 
             # Step 3: Handle CropModal that appears after image upload

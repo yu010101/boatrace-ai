@@ -539,120 +539,108 @@ class NoteClient:
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
         """Set eyecatch image via the editor page.
 
-        Tries multiple strategies:
-        1. JavaScript: inject file input + dispatch change event to eyecatch component
-        2. Click button[aria-label="画像を追加"] + expect_file_chooser
-        3. After click, wait for file input to appear
-        After image upload, handle CropModal (trim dialog).
+        Strategy: Set up MutationObserver to capture dynamically created file inputs,
+        then click the eyecatch button. The button creates a transient <input type="file">,
+        clicks it (opening file dialog), then removes it. We intercept this by:
+        1. Monkey-patching HTMLInputElement.click to prevent the native dialog
+        2. Capturing the dynamically created input
+        3. Setting files on it via Playwright
         """
         try:
-            # Debug: log editor state (WARNING level to ensure visibility in CI)
-            debug_info = await page.evaluate("""() => {
-                const info = {};
-                const fileInputs = document.querySelectorAll('input[type="file"]');
-                info.file_inputs = fileInputs.length;
-                const btn = document.querySelector('button[aria-label="画像を追加"]');
-                info.button_exists = !!btn;
-                if (btn) {
-                    const rect = btn.getBoundingClientRect();
-                    info.btn = {top: Math.round(rect.top), left: Math.round(rect.left),
-                                w: Math.round(rect.width), h: Math.round(rect.height)};
-                    // Check parent/sibling for hidden input
-                    const parent = btn.closest('div') || btn.parentElement;
-                    if (parent) {
-                        const parentInput = parent.querySelector('input[type="file"]');
-                        info.parent_has_input = !!parentInput;
+            eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
+            if await eyecatch_btn.count() == 0:
+                log.warning("[eyecatch] ボタンが見つかりません。スキップ")
+                return
+
+            # Install interceptor: monkey-patch input.click() to prevent native dialog
+            # and capture the dynamically created file input
+            await page.evaluate("""() => {
+                window.__eyecatchInputCaptured = null;
+                const origClick = HTMLInputElement.prototype.click;
+                HTMLInputElement.prototype.click = function() {
+                    if (this.type === 'file') {
+                        window.__eyecatchInputCaptured = this;
+                        // Don't call origClick - prevent native dialog
+                        // Keep the input in DOM so Playwright can set files
+                        if (!this.parentElement) {
+                            this.style.display = 'none';
+                            document.body.appendChild(this);
+                        }
+                        return;
                     }
-                }
-                // All inputs on page
-                info.all_inputs = Array.from(document.querySelectorAll('input')).map(i => ({
-                    type: i.type, accept: i.accept || '', hidden: i.hidden,
-                    display: getComputedStyle(i).display
-                }));
-                return info;
+                    return origClick.call(this);
+                };
             }""")
-            log.warning("[eyecatch debug] Editor state: %s", json.dumps(debug_info, ensure_ascii=False)[:600])
+            log.warning("[eyecatch] Installed input.click interceptor")
 
-            image_set = False
+            # Click the eyecatch button - this should trigger the interceptor
+            await eyecatch_btn.first.click()
+            await asyncio.sleep(2)
 
-            # Strategy 1: Direct file input (may be hidden in DOM)
-            file_inputs = page.locator('input[type="file"]')
-            fi_count = await file_inputs.count()
-            if fi_count > 0:
-                log.warning("[eyecatch] Found %d pre-existing file input(s)", fi_count)
-                await file_inputs.first.set_input_files(str(eyecatch_path))
+            # Check if we captured a file input
+            captured = await page.evaluate("""() => {
+                const inp = window.__eyecatchInputCaptured;
+                if (!inp) return null;
+                return {
+                    type: inp.type,
+                    accept: inp.accept || '',
+                    inDOM: !!inp.parentElement,
+                    id: inp.id || '_no_id',
+                };
+            }""")
+            log.warning("[eyecatch] Captured input: %s", json.dumps(captured, ensure_ascii=False) if captured else "null")
+
+            if captured:
+                # Set a unique ID so we can target it with Playwright
+                await page.evaluate("""() => {
+                    const inp = window.__eyecatchInputCaptured;
+                    inp.id = '_pw_eyecatch_file';
+                }""")
+                pw_input = page.locator('#_pw_eyecatch_file')
+                await pw_input.set_input_files(str(eyecatch_path))
                 await asyncio.sleep(3)
-                image_set = True
 
-            # Strategy 2: Click button → expect_file_chooser
-            if not image_set:
-                eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
-                if await eyecatch_btn.count() == 0:
-                    log.warning("[eyecatch] ボタンが見つかりません。スキップ")
-                    return
+                # Dispatch change event to trigger the upload handler
+                await page.evaluate("""() => {
+                    const inp = window.__eyecatchInputCaptured;
+                    inp.dispatchEvent(new Event('change', {bubbles: true}));
+                }""")
+                await asyncio.sleep(4)
+                log.warning("[eyecatch] File set + change dispatched")
 
-                log.warning("[eyecatch] Clicking button + expect_file_chooser (8s)...")
+                # Handle CropModal
+                await self._handle_crop_modal(page)
+                log.warning("[eyecatch] Eyecatch image set: %s", eyecatch_path.name)
+            else:
+                # Fallback: try expect_file_chooser directly
+                log.warning("[eyecatch] No captured input. Trying expect_file_chooser...")
                 try:
+                    # Restore original click first
+                    await page.evaluate("""() => {
+                        delete HTMLInputElement.prototype.click;
+                    }""")
                     async with page.expect_file_chooser(timeout=8000) as fc_info:
                         await eyecatch_btn.first.click()
                     file_chooser = await fc_info.value
                     await file_chooser.set_files(str(eyecatch_path))
-                    await asyncio.sleep(3)
-                    image_set = True
-                    log.warning("[eyecatch] Set via file chooser OK")
+                    await asyncio.sleep(4)
+                    await self._handle_crop_modal(page)
+                    log.warning("[eyecatch] Set via file chooser fallback")
                 except Exception as e:
-                    log.warning("[eyecatch] file chooser failed: %s", e)
+                    log.warning("[eyecatch] All strategies failed: %s", e)
 
-            # Strategy 3: Wait for file input to appear after click
-            if not image_set:
-                for attempt in range(5):
-                    await asyncio.sleep(1)
-                    fi_count = await file_inputs.count()
-                    if fi_count > 0:
-                        log.warning("[eyecatch] File input appeared after %ds", attempt + 1)
-                        await file_inputs.first.set_input_files(str(eyecatch_path))
-                        await asyncio.sleep(3)
-                        image_set = True
-                        break
+            # Restore original click
+            await page.evaluate("""() => {
+                delete HTMLInputElement.prototype.click;
+            }""")
 
-            # Strategy 4: JavaScript-based - create input, trigger upload via React internals
-            if not image_set:
-                log.warning("[eyecatch] Trying JS-based file injection...")
-                js_result = await page.evaluate("""(filePath) => {
-                    // Look for React fiber on the eyecatch button to find the component's file handler
-                    const btn = document.querySelector('button[aria-label="画像を追加"]');
-                    if (!btn) return {error: 'no button'};
-
-                    // Try to find the closest input[type="file"] by traversing up
-                    let el = btn;
-                    for (let i = 0; i < 10; i++) {
-                        el = el.parentElement;
-                        if (!el) break;
-                        const inp = el.querySelector('input[type="file"]');
-                        if (inp) return {found: 'input_in_ancestor', level: i};
-                    }
-
-                    // Check React fiber for onClick handler
-                    const fiberKey = Object.keys(btn).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
-                    if (fiberKey) {
-                        const fiber = btn[fiberKey];
-                        return {has_fiber: true, fiber_type: fiber?.type?.name || fiber?.type || 'unknown'};
-                    }
-
-                    return {error: 'no input or fiber found'};
-                }""", str(eyecatch_path))
-                log.warning("[eyecatch] JS probe result: %s", json.dumps(js_result, ensure_ascii=False))
-
-            if not image_set:
-                post_info = await page.evaluate("""() => ({
-                    file_inputs: document.querySelectorAll('input[type="file"]').length,
-                    modals: document.querySelectorAll('.ReactModal__Overlay').length,
-                    url: location.href,
-                    body_snippet: document.body.innerHTML.substring(0, 300),
-                })""")
-                log.warning("[eyecatch] Failed. State: %s",
-                           json.dumps(post_info, ensure_ascii=False)[:500])
-                return
+        except Exception as e:
+            log.warning("[eyecatch] 設定失敗（投稿は続行）: %s", e)
+            # Restore original click on error
+            try:
+                await page.evaluate("() => { delete HTMLInputElement.prototype.click; }")
+            except Exception:
+                pass
 
             # Step 3: Handle CropModal that appears after image upload
             # note.com shows a React modal with class "CropModal__overlay"

@@ -537,46 +537,49 @@ class NoteClient:
         return result
 
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
-        """Set eyecatch image by clicking the '画像を追加' button in the editor.
+        """Set eyecatch image via the editor page.
 
-        note.com's editor flow:
-        1. Check for hidden input[type="file"] already in DOM
-        2. If not found, click button[aria-label="画像を追加"] to reveal it
-        3. Set file via input[type="file"] or file chooser
-        4. CropModal appears for cropping → click confirm button to apply
+        Tries multiple strategies:
+        1. JavaScript: inject file input + dispatch change event to eyecatch component
+        2. Click button[aria-label="画像を追加"] + expect_file_chooser
+        3. After click, wait for file input to appear
+        After image upload, handle CropModal (trim dialog).
         """
         try:
-            log.info("Setting eyecatch in editor: %s", page.url)
-
-            # Log all file inputs and eyecatch-related elements for debugging
+            # Debug: log editor state (WARNING level to ensure visibility in CI)
             debug_info = await page.evaluate("""() => {
                 const info = {};
-                // File inputs
                 const fileInputs = document.querySelectorAll('input[type="file"]');
-                info.file_inputs_before_click = fileInputs.length;
-                info.file_input_details = Array.from(fileInputs).map(el => ({
-                    accept: el.accept, name: el.name, id: el.id,
-                    hidden: el.hidden, display: getComputedStyle(el).display,
-                    visibility: getComputedStyle(el).visibility,
-                }));
-                // Eyecatch button
+                info.file_inputs = fileInputs.length;
                 const btn = document.querySelector('button[aria-label="画像を追加"]');
-                info.eyecatch_button_exists = !!btn;
+                info.button_exists = !!btn;
                 if (btn) {
                     const rect = btn.getBoundingClientRect();
-                    info.button_rect = {top: rect.top, left: rect.left, w: rect.width, h: rect.height};
+                    info.btn = {top: Math.round(rect.top), left: Math.round(rect.left),
+                                w: Math.round(rect.width), h: Math.round(rect.height)};
+                    // Check parent/sibling for hidden input
+                    const parent = btn.closest('div') || btn.parentElement;
+                    if (parent) {
+                        const parentInput = parent.querySelector('input[type="file"]');
+                        info.parent_has_input = !!parentInput;
+                    }
                 }
+                // All inputs on page
+                info.all_inputs = Array.from(document.querySelectorAll('input')).map(i => ({
+                    type: i.type, accept: i.accept || '', hidden: i.hidden,
+                    display: getComputedStyle(i).display
+                }));
                 return info;
             }""")
-            log.info("Editor state: %s", json.dumps(debug_info, ensure_ascii=False))
+            log.warning("[eyecatch debug] Editor state: %s", json.dumps(debug_info, ensure_ascii=False)[:600])
 
             image_set = False
 
-            # Strategy 1: Hidden file input already in DOM (set files directly)
+            # Strategy 1: Direct file input (may be hidden in DOM)
             file_inputs = page.locator('input[type="file"]')
             fi_count = await file_inputs.count()
             if fi_count > 0:
-                log.info("Found %d pre-existing file input(s), setting directly", fi_count)
+                log.warning("[eyecatch] Found %d pre-existing file input(s)", fi_count)
                 await file_inputs.first.set_input_files(str(eyecatch_path))
                 await asyncio.sleep(3)
                 image_set = True
@@ -585,10 +588,10 @@ class NoteClient:
             if not image_set:
                 eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
                 if await eyecatch_btn.count() == 0:
-                    log.warning("アイキャッチボタンが見つかりません")
+                    log.warning("[eyecatch] ボタンが見つかりません。スキップ")
                     return
 
-                log.info("Clicking eyecatch button with expect_file_chooser...")
+                log.warning("[eyecatch] Clicking button + expect_file_chooser (8s)...")
                 try:
                     async with page.expect_file_chooser(timeout=8000) as fc_info:
                         await eyecatch_btn.first.click()
@@ -596,34 +599,58 @@ class NoteClient:
                     await file_chooser.set_files(str(eyecatch_path))
                     await asyncio.sleep(3)
                     image_set = True
-                    log.info("Eyecatch set via file chooser")
+                    log.warning("[eyecatch] Set via file chooser OK")
                 except Exception as e:
-                    log.info("File chooser not triggered: %s", e)
+                    log.warning("[eyecatch] file chooser failed: %s", e)
 
-            # Strategy 3: After button click, wait for file input to appear
+            # Strategy 3: Wait for file input to appear after click
             if not image_set:
                 for attempt in range(5):
                     await asyncio.sleep(1)
                     fi_count = await file_inputs.count()
                     if fi_count > 0:
-                        log.info("File input appeared after %d sec", attempt + 1)
+                        log.warning("[eyecatch] File input appeared after %ds", attempt + 1)
                         await file_inputs.first.set_input_files(str(eyecatch_path))
                         await asyncio.sleep(3)
                         image_set = True
                         break
 
+            # Strategy 4: JavaScript-based - create input, trigger upload via React internals
             if not image_set:
-                # Log post-click state for debugging
-                post_info = await page.evaluate("""() => {
-                    const info = {};
-                    info.file_inputs = document.querySelectorAll('input[type="file"]').length;
-                    info.modals = document.querySelectorAll('.ReactModal__Overlay, [class*="modal"]').length;
-                    info.sections = Array.from(document.querySelectorAll('section')).map(
-                        s => ({cls: s.className?.substring(0, 80), text: s.textContent?.substring(0, 100)})
-                    );
-                    return info;
-                }""")
-                log.warning("Eyecatch failed. Post-click state: %s",
+                log.warning("[eyecatch] Trying JS-based file injection...")
+                js_result = await page.evaluate("""(filePath) => {
+                    // Look for React fiber on the eyecatch button to find the component's file handler
+                    const btn = document.querySelector('button[aria-label="画像を追加"]');
+                    if (!btn) return {error: 'no button'};
+
+                    // Try to find the closest input[type="file"] by traversing up
+                    let el = btn;
+                    for (let i = 0; i < 10; i++) {
+                        el = el.parentElement;
+                        if (!el) break;
+                        const inp = el.querySelector('input[type="file"]');
+                        if (inp) return {found: 'input_in_ancestor', level: i};
+                    }
+
+                    // Check React fiber for onClick handler
+                    const fiberKey = Object.keys(btn).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+                    if (fiberKey) {
+                        const fiber = btn[fiberKey];
+                        return {has_fiber: true, fiber_type: fiber?.type?.name || fiber?.type || 'unknown'};
+                    }
+
+                    return {error: 'no input or fiber found'};
+                }""", str(eyecatch_path))
+                log.warning("[eyecatch] JS probe result: %s", json.dumps(js_result, ensure_ascii=False))
+
+            if not image_set:
+                post_info = await page.evaluate("""() => ({
+                    file_inputs: document.querySelectorAll('input[type="file"]').length,
+                    modals: document.querySelectorAll('.ReactModal__Overlay').length,
+                    url: location.href,
+                    body_snippet: document.body.innerHTML.substring(0, 300),
+                })""")
+                log.warning("[eyecatch] Failed. State: %s",
                            json.dumps(post_info, ensure_ascii=False)[:500])
                 return
 

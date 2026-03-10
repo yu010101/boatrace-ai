@@ -539,183 +539,99 @@ class NoteClient:
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
         """Set eyecatch image via the editor page.
 
-        note.com likely uses window.showOpenFilePicker() (File System Access API)
-        which Playwright cannot intercept via expect_file_chooser.
-
-        Strategy: Mock showOpenFilePicker to return our file data, then click the button.
-        Also intercept input.click() as a secondary strategy.
+        Verified note.com editor flow:
+        1. Click button[aria-label="画像を追加"] → dropdown menu appears
+        2. Dropdown has "画像をアップロード" button → click it → file picker opens
+        3. Set file → CropModal appears → click confirm to apply
         """
         try:
+            # Step 1: Click the eyecatch toggle button to open dropdown
             eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
             if await eyecatch_btn.count() == 0:
                 log.warning("[eyecatch] ボタンが見つかりません。スキップ")
                 return
 
-            # Read the eyecatch file and encode as base64 for JS injection
+            # Install interceptors for showOpenFilePicker and input.click
             import base64
-            image_data = eyecatch_path.read_bytes()
-            image_b64 = base64.b64encode(image_data).decode()
-
-            # Install comprehensive interceptors
+            image_b64 = base64.b64encode(eyecatch_path.read_bytes()).decode()
             await page.evaluate("""(imageB64) => {
-                // Convert base64 to File object
                 const byteChars = atob(imageB64);
                 const byteArray = new Uint8Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) {
-                    byteArray[i] = byteChars.charCodeAt(i);
-                }
+                for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
                 const blob = new Blob([byteArray], {type: 'image/png'});
                 const file = new File([blob], 'eyecatch.png', {type: 'image/png'});
-
                 window.__eyecatchFile = file;
                 window.__eyecatchMethod = null;
 
-                // Strategy A: Mock showOpenFilePicker (File System Access API)
+                // Mock showOpenFilePicker
                 if (window.showOpenFilePicker) {
-                    const origPicker = window.showOpenFilePicker;
-                    window.showOpenFilePicker = async function(options) {
+                    window.showOpenFilePicker = async () => {
                         window.__eyecatchMethod = 'showOpenFilePicker';
-                        // Return a mock FileSystemFileHandle
-                        return [{
-                            kind: 'file',
-                            name: 'eyecatch.png',
-                            getFile: async () => file,
-                            createWritable: async () => { throw new Error('read-only'); },
-                        }];
+                        return [{kind: 'file', name: 'eyecatch.png', getFile: async () => file}];
                     };
                 }
-
-                // Strategy B: Intercept input.click()
+                // Intercept input.click
                 const origClick = HTMLInputElement.prototype.click;
                 HTMLInputElement.prototype.click = function() {
                     if (this.type === 'file') {
                         window.__eyecatchMethod = 'input.click';
-                        // Create a DataTransfer with our file
                         const dt = new DataTransfer();
                         dt.items.add(file);
                         this.files = dt.files;
-                        // Keep in DOM
-                        if (!this.parentElement) {
-                            this.style.display = 'none';
-                            document.body.appendChild(this);
-                        }
-                        // Dispatch change event
+                        if (!this.parentElement) { this.style.display='none'; document.body.appendChild(this); }
                         this.dispatchEvent(new Event('change', {bubbles: true}));
-                        this.dispatchEvent(new Event('input', {bubbles: true}));
                         return;
                     }
                     return origClick.call(this);
                 };
-
-                window.__eyecatchCleanup = () => {
-                    delete HTMLInputElement.prototype.click;
-                    if (window.__eyecatchFile) delete window.__eyecatchFile;
-                };
+                window.__eyecatchCleanup = () => { delete HTMLInputElement.prototype.click; };
             }""", image_b64)
-            log.warning("[eyecatch] Interceptors installed (showOpenFilePicker + input.click)")
 
-            # onClick is a toggle: ()=>d(!c). Click ONCE to open dropdown UI.
-            log.warning("[eyecatch] Clicking button once (toggle open)...")
+            log.warning("[eyecatch] Step 1: Clicking toggle button...")
             await eyecatch_btn.first.click()
             await asyncio.sleep(2)
 
-            # Snapshot DOM after click: look for new elements
-            after_click = await page.evaluate("""() => {
-                const info = {};
-                info.file_inputs = document.querySelectorAll('input[type="file"]').length;
-                info.modals = document.querySelectorAll('.ReactModal__Overlay').length;
+            # Step 2: Find and click "画像をアップロード" button in dropdown
+            upload_btn = page.locator('button:has-text("画像をアップロード")')
+            if await upload_btn.count() == 0:
+                # Fallback: broader search
+                upload_btn = page.get_by_text("画像をアップロード")
+            btn_count = await upload_btn.count()
+            log.warning("[eyecatch] Step 2: '画像をアップロード' buttons found: %d", btn_count)
 
-                // Look for dropdown/menu/popover elements
-                const candidates = document.querySelectorAll(
-                    'section, [role="menu"], [role="listbox"], [role="dialog"], ' +
-                    'div[class*="dropdown"], div[class*="popover"], div[class*="menu"], ' +
-                    'ul[class*="menu"], div[class*="panel"]'
-                );
-                info.candidates = Array.from(candidates).map(el => {
-                    const rect = el.getBoundingClientRect();
-                    return {
-                        tag: el.tagName,
-                        role: el.getAttribute('role') || '',
-                        cls: el.className?.toString().substring(0, 120) || '',
-                        text: el.textContent?.trim().substring(0, 200) || '',
-                        visible: rect.width > 0 && rect.height > 0,
-                        rect: {t: Math.round(rect.top), l: Math.round(rect.left),
-                               w: Math.round(rect.width), h: Math.round(rect.height)},
-                    };
-                }).filter(c => c.visible);
-
-                // Also check for new buttons/links near the eyecatch button area
-                const btn = document.querySelector('button[aria-label="画像を追加"]');
-                if (btn) {
-                    const btnRect = btn.getBoundingClientRect();
-                    const nearby = [];
-                    for (const el of document.querySelectorAll('button, a, [role="menuitem"], label')) {
-                        const r = el.getBoundingClientRect();
-                        // Within 300px of the eyecatch button
-                        if (r.width > 0 && Math.abs(r.top - btnRect.top) < 300 && Math.abs(r.left - btnRect.left) < 300) {
-                            const text = el.textContent?.trim() || '';
-                            const aria = el.getAttribute('aria-label') || '';
-                            if (text || aria) {
-                                nearby.push({tag: el.tagName, text: text.substring(0, 50), aria, t: Math.round(r.top), l: Math.round(r.left)});
-                            }
-                        }
-                    }
-                    info.nearby_elements = nearby;
-                }
-
-                return info;
-            }""")
-            log.warning("[eyecatch] After click: %s", json.dumps(after_click, ensure_ascii=False)[:800])
-
-            # If file input appeared after toggle, set files
-            if after_click.get("file_inputs", 0) > 0:
-                file_inputs = page.locator('input[type="file"]')
-                await file_inputs.first.set_input_files(str(eyecatch_path))
-                await asyncio.sleep(4)
-                await self._handle_crop_modal(page)
-                log.warning("[eyecatch] Set via file input after toggle")
-            elif after_click.get("candidates"):
-                # Look for upload/image option in the dropdown
-                for candidate in after_click["candidates"]:
-                    text = candidate.get("text", "")
-                    if any(kw in text for kw in ["アップロード", "画像を選択", "ファイル", "upload"]):
-                        log.warning("[eyecatch] Found upload option: %s", text[:50])
-                        # Click this option
-                        upload_el = page.locator(f"text={text[:20]}")
-                        if await upload_el.count() > 0:
-                            try:
-                                async with page.expect_file_chooser(timeout=5000) as fc_info:
-                                    await upload_el.first.click()
-                                file_chooser = await fc_info.value
-                                await file_chooser.set_files(str(eyecatch_path))
-                                await asyncio.sleep(4)
-                                await self._handle_crop_modal(page)
-                                log.warning("[eyecatch] Set via dropdown upload option")
-                            except Exception as e:
-                                log.warning("[eyecatch] Upload option click failed: %s", e)
-                        break
-                else:
-                    # Try clicking each candidate's first button/link
-                    for candidate in after_click["candidates"]:
-                        ctext = candidate.get("text", "")[:30]
-                        if ctext:
-                            btn_in_menu = page.locator(f'section >> button, [role="menu"] >> button').first
-                            try:
-                                if await btn_in_menu.count() > 0:
-                                    async with page.expect_file_chooser(timeout=3000) as fc_info:
-                                        await btn_in_menu.click()
-                                    file_chooser = await fc_info.value
-                                    await file_chooser.set_files(str(eyecatch_path))
-                                    await asyncio.sleep(4)
-                                    await self._handle_crop_modal(page)
-                                    log.warning("[eyecatch] Set via menu button")
-                                    break
-                            except Exception:
-                                pass
+            if btn_count > 0:
+                # Try expect_file_chooser first (in case it uses standard file input)
+                try:
+                    async with page.expect_file_chooser(timeout=5000) as fc_info:
+                        await upload_btn.first.click()
+                    file_chooser = await fc_info.value
+                    await file_chooser.set_files(str(eyecatch_path))
+                    await asyncio.sleep(4)
+                    log.warning("[eyecatch] Set via file chooser after upload button click")
+                except Exception:
+                    # Check if interceptors caught it
+                    method = await page.evaluate("() => window.__eyecatchMethod")
+                    log.warning("[eyecatch] File chooser timeout. Interceptor method: %s", method)
+                    if method:
+                        await asyncio.sleep(4)
+                        log.warning("[eyecatch] Set via interceptor: %s", method)
                     else:
-                        log.warning("[eyecatch] Could not find upload trigger in dropdown")
+                        # Last resort: check for file input
+                        fi = page.locator('input[type="file"]')
+                        if await fi.count() > 0:
+                            await fi.first.set_input_files(str(eyecatch_path))
+                            await asyncio.sleep(4)
+                            log.warning("[eyecatch] Set via file input after upload click")
+                        else:
+                            log.warning("[eyecatch] Upload button clicked but no file mechanism triggered")
+                            await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")
+                            return
+
+                # Step 3: Handle CropModal
+                await self._handle_crop_modal(page)
+                log.warning("[eyecatch] Eyecatch image set successfully: %s", eyecatch_path.name)
             else:
-                log.warning("[eyecatch] No UI appeared after button click")
+                log.warning("[eyecatch] '画像をアップロード' button not found in dropdown")
 
             # Cleanup
             await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")

@@ -539,53 +539,104 @@ class NoteClient:
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
         """Set eyecatch image by clicking the '画像を追加' button in the editor.
 
-        note.com's editor has a button with aria-label="画像を追加" above the title.
-        Clicking it opens a native file chooser dialog.
-        We use Playwright's expect_file_chooser to intercept and set the file.
+        note.com's editor flow:
+        1. Click button[aria-label="画像を追加"] → opens a dropdown/menu
+        2. Click the upload option in the menu → triggers native file chooser
+        3. Set file via file chooser
         """
         try:
             log.info("Setting eyecatch in editor: %s", page.url)
 
-            # Primary: use the exact aria-label selector (verified via debug session)
+            # Step 1: Find and click the eyecatch button
             eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
-            if await eyecatch_btn.count() > 0:
-                log.info("Found eyecatch button via aria-label='画像を追加'")
-                try:
-                    async with page.expect_file_chooser(timeout=5000) as fc_info:
-                        await eyecatch_btn.first.click()
-                    file_chooser = await fc_info.value
-                    await file_chooser.set_files(str(eyecatch_path))
-                    await asyncio.sleep(4)
-                    log.info("Eyecatch image set via file chooser: %s", eyecatch_path.name)
-                    return
-                except Exception as e:
-                    log.warning("File chooser failed for aria-label button: %s", e)
-
-            # Fallback: try get_by_role with name
-            eyecatch_btn = page.get_by_role("button", name="画像を追加")
-            if await eyecatch_btn.count() > 0:
-                log.info("Found eyecatch button via role='button' name='画像を追加'")
-                try:
-                    async with page.expect_file_chooser(timeout=5000) as fc_info:
-                        await eyecatch_btn.first.click()
-                    file_chooser = await fc_info.value
-                    await file_chooser.set_files(str(eyecatch_path))
-                    await asyncio.sleep(4)
-                    log.info("Eyecatch image set via role button: %s", eyecatch_path.name)
-                    return
-                except Exception as e:
-                    log.warning("File chooser failed for role button: %s", e)
-
-            # Fallback: look for hidden file input (some editors inject one)
-            file_inputs = page.locator('input[type="file"]')
-            count = await file_inputs.count()
-            if count > 0:
-                await file_inputs.first.set_input_files(str(eyecatch_path))
-                await asyncio.sleep(4)
-                log.info("Eyecatch image set via file input fallback: %s", eyecatch_path.name)
+            if await eyecatch_btn.count() == 0:
+                log.warning("アイキャッチボタン(aria-label='画像を追加')が見つかりません")
                 return
 
-            log.warning("アイキャッチボタンが見つかりません。スキップします。")
+            log.info("Found eyecatch button, clicking...")
+            await eyecatch_btn.first.click()
+            await asyncio.sleep(2)
+
+            # Step 2: After clicking, a menu/section may appear.
+            # Look for upload-related options in the newly appeared UI.
+            # Try multiple strategies to find and click the upload trigger.
+
+            # Strategy A: Look for file input that appeared after click
+            file_inputs = page.locator('input[type="file"]')
+            fi_count = await file_inputs.count()
+            if fi_count > 0:
+                log.info("Found %d file input(s) after eyecatch button click", fi_count)
+                await file_inputs.first.set_input_files(str(eyecatch_path))
+                await asyncio.sleep(4)
+                log.info("Eyecatch set via file input: %s", eyecatch_path.name)
+                return
+
+            # Strategy B: Find menu items with upload-related text
+            upload_keywords = ["アップロード", "ファイルを選択", "画像を選択", "選択"]
+            for keyword in upload_keywords:
+                items = page.locator(f"text={keyword}")
+                if await items.count() > 0:
+                    log.info("Found menu item '%s', clicking...", keyword)
+                    try:
+                        async with page.expect_file_chooser(timeout=5000) as fc_info:
+                            await items.first.click()
+                        file_chooser = await fc_info.value
+                        await file_chooser.set_files(str(eyecatch_path))
+                        await asyncio.sleep(4)
+                        log.info("Eyecatch set via menu '%s': %s", keyword, eyecatch_path.name)
+                        return
+                    except Exception as e:
+                        log.info("Menu item '%s' didn't trigger file chooser: %s", keyword, e)
+
+            # Strategy C: Click any visible button/link in the popup area
+            # that might trigger file chooser
+            new_elements = await page.evaluate("""() => {
+                const results = [];
+                // Find recently appeared sections, menus, dialogs
+                for (const el of document.querySelectorAll('section, [role="menu"], [role="dialog"], [role="listbox"], div[class*="menu"], div[class*="popup"], div[class*="dropdown"], div[class*="modal"]')) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        const text = el.textContent?.trim().substring(0, 200) || '';
+                        const tag = el.tagName;
+                        const cls = el.className?.toString().substring(0, 100) || '';
+                        results.push({tag, cls, text, top: rect.top, left: rect.left, w: rect.width, h: rect.height});
+                    }
+                }
+                return results;
+            }""")
+            log.info("Elements after eyecatch click: %s", json.dumps(new_elements, ensure_ascii=False)[:500])
+
+            # Strategy D: Look for clickable items inside any section/menu
+            for selector in ['section button', 'section a', 'section [role="menuitem"]',
+                             '[role="menu"] button', '[role="menu"] [role="menuitem"]',
+                             'div[class*="menu"] button']:
+                items = page.locator(selector)
+                count = await items.count()
+                if count > 0:
+                    for i in range(count):
+                        item = items.nth(i)
+                        if await item.is_visible():
+                            text = (await item.text_content() or "").strip()
+                            log.info("Trying menu item: selector=%s text='%s'", selector, text[:50])
+                            try:
+                                async with page.expect_file_chooser(timeout=3000) as fc_info:
+                                    await item.click()
+                                file_chooser = await fc_info.value
+                                await file_chooser.set_files(str(eyecatch_path))
+                                await asyncio.sleep(4)
+                                log.info("Eyecatch set via %s: %s", selector, eyecatch_path.name)
+                                return
+                            except Exception:
+                                pass
+                            # Check if file input appeared after this click
+                            fi_count = await file_inputs.count()
+                            if fi_count > 0:
+                                await file_inputs.first.set_input_files(str(eyecatch_path))
+                                await asyncio.sleep(4)
+                                log.info("Eyecatch set via file input after %s click", selector)
+                                return
+
+            log.warning("アイキャッチ設定失敗: ボタンクリック後のアップロードUIを検出できず")
 
         except Exception as e:
             log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)

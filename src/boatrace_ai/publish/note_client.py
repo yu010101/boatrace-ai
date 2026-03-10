@@ -537,75 +537,55 @@ class NoteClient:
         return result
 
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
-        """Set eyecatch image by clicking the image icon above the title in the editor.
+        """Set eyecatch image by clicking the '画像を追加' button in the editor.
 
-        note.com's editor has an eyecatch icon above the title.
+        note.com's editor has a button with aria-label="画像を追加" above the title.
         Clicking it opens a native file chooser dialog.
         We use Playwright's expect_file_chooser to intercept and set the file.
         """
         try:
             log.info("Setting eyecatch in editor: %s", page.url)
 
-            # Find the eyecatch icon: an SVG-containing element above the title
-            eyecatch_target = await page.evaluate("""() => {
-                // Strategy 1: Find button/div with SVG near the top of the editor
-                const els = document.querySelectorAll('button, [role="button"], div, span');
-                for (const el of els) {
-                    const rect = el.getBoundingClientRect();
-                    if (rect.top > 50 && rect.top < 250 && rect.width > 20 && rect.width < 200) {
-                        const hasSvg = el.querySelector('svg') !== null;
-                        const text = el.textContent?.trim() || '';
-                        if (hasSvg && text.length < 5) {
-                            return {top: rect.top, left: rect.left, width: rect.width, height: rect.height, method: 'svg_icon'};
-                        }
-                    }
-                }
-                // Strategy 2: Look for element with eyecatch/cover in class or data attribute
-                for (const el of document.querySelectorAll('[class*="eyecatch"], [class*="cover"], [class*="header-image"], [data-testid*="eyecatch"]')) {
-                    const rect = el.getBoundingClientRect();
-                    if (rect.width > 0) {
-                        return {top: rect.top, left: rect.left, width: rect.width, height: rect.height, method: 'class_match'};
-                    }
-                }
-                // Strategy 3: Find the area above the title textarea
-                const textarea = document.querySelector('textarea');
-                if (textarea) {
-                    const rect = textarea.getBoundingClientRect();
-                    return {top: rect.top - 60, left: rect.left + rect.width / 2 - 25, width: 50, height: 50, method: 'above_title'};
-                }
-                return null;
-            }""")
+            # Primary: use the exact aria-label selector (verified via debug session)
+            eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
+            if await eyecatch_btn.count() > 0:
+                log.info("Found eyecatch button via aria-label='画像を追加'")
+                try:
+                    async with page.expect_file_chooser(timeout=5000) as fc_info:
+                        await eyecatch_btn.first.click()
+                    file_chooser = await fc_info.value
+                    await file_chooser.set_files(str(eyecatch_path))
+                    await asyncio.sleep(4)
+                    log.info("Eyecatch image set via file chooser: %s", eyecatch_path.name)
+                    return
+                except Exception as e:
+                    log.warning("File chooser failed for aria-label button: %s", e)
 
-            if not eyecatch_target:
-                log.warning("アイキャッチアイコンが見つかりません。スキップ")
-                return
+            # Fallback: try get_by_role with name
+            eyecatch_btn = page.get_by_role("button", name="画像を追加")
+            if await eyecatch_btn.count() > 0:
+                log.info("Found eyecatch button via role='button' name='画像を追加'")
+                try:
+                    async with page.expect_file_chooser(timeout=5000) as fc_info:
+                        await eyecatch_btn.first.click()
+                    file_chooser = await fc_info.value
+                    await file_chooser.set_files(str(eyecatch_path))
+                    await asyncio.sleep(4)
+                    log.info("Eyecatch image set via role button: %s", eyecatch_path.name)
+                    return
+                except Exception as e:
+                    log.warning("File chooser failed for role button: %s", e)
 
-            x = eyecatch_target["left"] + eyecatch_target["width"] / 2
-            y = eyecatch_target["top"] + eyecatch_target["height"] / 2
-            method = eyecatch_target.get("method", "unknown")
-            log.info("Eyecatch target found (method=%s) at (%d, %d)", method, x, y)
-
-            # Use expect_file_chooser to handle native file dialog
-            try:
-                async with page.expect_file_chooser(timeout=5000) as fc_info:
-                    await page.mouse.click(x, y)
-                file_chooser = await fc_info.value
-                await file_chooser.set_files(str(eyecatch_path))
-                await asyncio.sleep(4)  # Wait for upload to complete
-                log.info("Eyecatch image set via file chooser: %s", eyecatch_path.name)
-                return
-            except Exception as e:
-                log.info("File chooser not triggered (method=%s): %s", method, e)
-
-            # Fallback: check if a file input appeared after click
+            # Fallback: look for hidden file input (some editors inject one)
             file_inputs = page.locator('input[type="file"]')
             count = await file_inputs.count()
             if count > 0:
                 await file_inputs.first.set_input_files(str(eyecatch_path))
                 await asyncio.sleep(4)
                 log.info("Eyecatch image set via file input fallback: %s", eyecatch_path.name)
-            else:
-                log.warning("アイキャッチ設定失敗: file chooserもfile inputも検出できず")
+                return
+
+            log.warning("アイキャッチボタンが見つかりません。スキップします。")
 
         except Exception as e:
             log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)

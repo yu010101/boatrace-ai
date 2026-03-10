@@ -554,90 +554,75 @@ class NoteClient:
                 log.warning("[eyecatch] ボタンが見つかりません。スキップ")
                 return
 
-            # Install interceptors for showOpenFilePicker and input.click
-            import base64
-            image_b64 = base64.b64encode(eyecatch_path.read_bytes()).decode()
-            await page.evaluate("""(imageB64) => {
-                const byteChars = atob(imageB64);
-                const byteArray = new Uint8Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
-                const blob = new Blob([byteArray], {type: 'image/png'});
-                const file = new File([blob], 'eyecatch.png', {type: 'image/png'});
-                window.__eyecatchFile = file;
+            # Install interceptor: capture dynamic file input and keep it in DOM
+            # so Playwright can use set_input_files (CDP-based, proper upload)
+            await page.evaluate("""() => {
                 window.__eyecatchMethod = null;
-
-                // Mock showOpenFilePicker
-                if (window.showOpenFilePicker) {
-                    window.showOpenFilePicker = async () => {
-                        window.__eyecatchMethod = 'showOpenFilePicker';
-                        return [{kind: 'file', name: 'eyecatch.png', getFile: async () => file}];
-                    };
-                }
-                // Intercept input.click
+                window.__eyecatchInputId = null;
                 const origClick = HTMLInputElement.prototype.click;
                 HTMLInputElement.prototype.click = function() {
                     if (this.type === 'file') {
                         window.__eyecatchMethod = 'input.click';
-                        const dt = new DataTransfer();
-                        dt.items.add(file);
-                        this.files = dt.files;
-                        if (!this.parentElement) { this.style.display='none'; document.body.appendChild(this); }
-                        this.dispatchEvent(new Event('change', {bubbles: true}));
+                        // Keep in DOM with a known ID for Playwright to target
+                        this.id = '_pw_eyecatch_file';
+                        if (!this.parentElement) {
+                            this.style.position = 'fixed';
+                            this.style.top = '-9999px';
+                            document.body.appendChild(this);
+                        }
+                        window.__eyecatchInputId = '_pw_eyecatch_file';
+                        // Do NOT call origClick - prevent native dialog
+                        // Do NOT set files via DataTransfer - let Playwright do it
                         return;
                     }
                     return origClick.call(this);
                 };
                 window.__eyecatchCleanup = () => { delete HTMLInputElement.prototype.click; };
-            }""", image_b64)
+            }""")
 
+            # Step 1: Click toggle button to open dropdown
             log.warning("[eyecatch] Step 1: Clicking toggle button...")
             await eyecatch_btn.first.click()
             await asyncio.sleep(2)
 
-            # Step 2: Find and click "画像をアップロード" button in dropdown
+            # Step 2: Click "画像をアップロード" button
             upload_btn = page.locator('button:has-text("画像をアップロード")')
             if await upload_btn.count() == 0:
-                # Fallback: broader search
                 upload_btn = page.get_by_text("画像をアップロード")
             btn_count = await upload_btn.count()
             log.warning("[eyecatch] Step 2: '画像をアップロード' buttons found: %d", btn_count)
 
-            if btn_count > 0:
-                # Try expect_file_chooser first (in case it uses standard file input)
-                try:
-                    async with page.expect_file_chooser(timeout=5000) as fc_info:
-                        await upload_btn.first.click()
-                    file_chooser = await fc_info.value
-                    await file_chooser.set_files(str(eyecatch_path))
-                    await asyncio.sleep(4)
-                    log.warning("[eyecatch] Set via file chooser after upload button click")
-                except Exception:
-                    # Check if interceptors caught it
-                    method = await page.evaluate("() => window.__eyecatchMethod")
-                    log.warning("[eyecatch] File chooser timeout. Interceptor method: %s", method)
-                    if method:
-                        await asyncio.sleep(4)
-                        log.warning("[eyecatch] Set via interceptor: %s", method)
-                    else:
-                        # Last resort: check for file input
-                        fi = page.locator('input[type="file"]')
-                        if await fi.count() > 0:
-                            await fi.first.set_input_files(str(eyecatch_path))
-                            await asyncio.sleep(4)
-                            log.warning("[eyecatch] Set via file input after upload click")
-                        else:
-                            log.warning("[eyecatch] Upload button clicked but no file mechanism triggered")
-                            await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")
-                            return
+            if btn_count == 0:
+                log.warning("[eyecatch] '画像をアップロード' not found")
+                await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")
+                return
 
-                # Step 3: Handle CropModal
-                await self._handle_crop_modal(page)
-                log.warning("[eyecatch] Eyecatch image set successfully: %s", eyecatch_path.name)
-            else:
-                log.warning("[eyecatch] '画像をアップロード' button not found in dropdown")
+            await upload_btn.first.click()
+            await asyncio.sleep(2)
 
-            # Cleanup
+            # Step 3: Check if interceptor captured the input
+            method = await page.evaluate("() => window.__eyecatchMethod")
+            input_id = await page.evaluate("() => window.__eyecatchInputId")
+            log.warning("[eyecatch] Step 3: method=%s, input_id=%s", method, input_id)
+
+            # Restore original click before setting files
             await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")
+
+            if input_id:
+                # Use Playwright's set_input_files (CDP-based) for proper file upload
+                pw_input = page.locator(f'#{input_id}')
+                if await pw_input.count() > 0:
+                    await pw_input.set_input_files(str(eyecatch_path))
+                    log.warning("[eyecatch] File set via Playwright CDP on #%s", input_id)
+                    await asyncio.sleep(5)
+
+                    # Step 4: Handle CropModal
+                    await self._dismiss_modals(page)
+                    log.warning("[eyecatch] Eyecatch set: %s", eyecatch_path.name)
+                else:
+                    log.warning("[eyecatch] Captured input #%s not found in DOM", input_id)
+            else:
+                log.warning("[eyecatch] No input captured by interceptor")
 
         except Exception as e:
             log.warning("[eyecatch] 設定失敗（投稿は続行）: %s", e)

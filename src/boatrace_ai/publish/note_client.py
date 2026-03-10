@@ -539,62 +539,73 @@ class NoteClient:
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
         """Set eyecatch image by clicking the image icon above the title in the editor.
 
-        note.com's editor has an eyecatch icon (camera/image icon) above the title.
-        Clicking it reveals a hidden file input for the cover image.
+        note.com's editor has an eyecatch icon above the title.
+        Clicking it opens a native file chooser dialog.
+        We use Playwright's expect_file_chooser to intercept and set the file.
         """
         try:
             log.info("Setting eyecatch in editor: %s", page.url)
 
-            # The eyecatch icon is above the title. Find it by looking for
-            # clickable elements in the top area of the editor content.
-            # It's typically an SVG icon or button near the top.
-            eyecatch_btn = await page.evaluate("""() => {
-                // Find all clickable elements in the upper part of the editor
-                const els = document.querySelectorAll('button, [role="button"], a, div[class*="eyecatch"], div[class*="cover"], div[class*="thumbnail"]');
+            # Find the eyecatch icon: an SVG-containing element above the title
+            eyecatch_target = await page.evaluate("""() => {
+                // Strategy 1: Find button/div with SVG near the top of the editor
+                const els = document.querySelectorAll('button, [role="button"], div, span');
                 for (const el of els) {
                     const rect = el.getBoundingClientRect();
-                    // The eyecatch icon is typically in the top area (y < 200)
-                    // and contains an SVG or image-related element
-                    if (rect.top > 50 && rect.top < 200 && rect.width > 20 && rect.width < 150) {
+                    if (rect.top > 50 && rect.top < 250 && rect.width > 20 && rect.width < 200) {
                         const hasSvg = el.querySelector('svg') !== null;
                         const text = el.textContent?.trim() || '';
                         if (hasSvg && text.length < 5) {
-                            return {top: rect.top, left: rect.left, width: rect.width, height: rect.height};
+                            return {top: rect.top, left: rect.left, width: rect.width, height: rect.height, method: 'svg_icon'};
                         }
                     }
+                }
+                // Strategy 2: Look for element with eyecatch/cover in class or data attribute
+                for (const el of document.querySelectorAll('[class*="eyecatch"], [class*="cover"], [class*="header-image"], [data-testid*="eyecatch"]')) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0) {
+                        return {top: rect.top, left: rect.left, width: rect.width, height: rect.height, method: 'class_match'};
+                    }
+                }
+                // Strategy 3: Find the area above the title textarea
+                const textarea = document.querySelector('textarea');
+                if (textarea) {
+                    const rect = textarea.getBoundingClientRect();
+                    return {top: rect.top - 60, left: rect.left + rect.width / 2 - 25, width: 50, height: 50, method: 'above_title'};
                 }
                 return null;
             }""")
 
-            if eyecatch_btn:
-                # Click the eyecatch icon
-                x = eyecatch_btn["left"] + eyecatch_btn["width"] / 2
-                y = eyecatch_btn["top"] + eyecatch_btn["height"] / 2
-                await page.mouse.click(x, y)
-                await asyncio.sleep(2)
-                log.info("Clicked eyecatch icon at (%d, %d)", x, y)
-            else:
-                # Fallback: click the area above the title textarea
-                title_el = await page.query_selector("textarea")
-                if title_el:
-                    box = await title_el.bounding_box()
-                    if box:
-                        await page.mouse.click(box["x"] + box["width"] / 2, box["y"] - 60)
-                        await asyncio.sleep(2)
-                        log.info("Clicked area above title for eyecatch")
+            if not eyecatch_target:
+                log.warning("アイキャッチアイコンが見つかりません。スキップ")
+                return
 
-            # After clicking, a file input should appear
+            x = eyecatch_target["left"] + eyecatch_target["width"] / 2
+            y = eyecatch_target["top"] + eyecatch_target["height"] / 2
+            method = eyecatch_target.get("method", "unknown")
+            log.info("Eyecatch target found (method=%s) at (%d, %d)", method, x, y)
+
+            # Use expect_file_chooser to handle native file dialog
+            try:
+                async with page.expect_file_chooser(timeout=5000) as fc_info:
+                    await page.mouse.click(x, y)
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(str(eyecatch_path))
+                await asyncio.sleep(4)  # Wait for upload to complete
+                log.info("Eyecatch image set via file chooser: %s", eyecatch_path.name)
+                return
+            except Exception as e:
+                log.info("File chooser not triggered (method=%s): %s", method, e)
+
+            # Fallback: check if a file input appeared after click
             file_inputs = page.locator('input[type="file"]')
             count = await file_inputs.count()
-            log.info("Found %d file input(s) after clicking eyecatch area", count)
-
             if count > 0:
                 await file_inputs.first.set_input_files(str(eyecatch_path))
-                await asyncio.sleep(4)  # Wait for upload
-                log.info("Eyecatch image set: %s", eyecatch_path.name)
+                await asyncio.sleep(4)
+                log.info("Eyecatch image set via file input fallback: %s", eyecatch_path.name)
             else:
-                # Last resort: inject a file input and trigger upload via API interception
-                log.warning("file inputが見つかりません。アイキャッチ設定をスキップ")
+                log.warning("アイキャッチ設定失敗: file chooserもfile inputも検出できず")
 
         except Exception as e:
             log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)

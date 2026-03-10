@@ -987,9 +987,11 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
     stats = get_stats()
     roi_stats = get_roi_daily(target_str)
 
-    # Step 5: Generate report (with ROI)
+    # Step 5: Generate report (with ROI + related links)
+    related_links = _get_related_links("grades", "track_record", "midday")
     title, html_body, hashtags = generate_accuracy_report(
         target_str, records, stats, roi_stats=roi_stats,
+        related_links=related_links,
     )
 
     if dry_run:

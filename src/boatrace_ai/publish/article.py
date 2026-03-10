@@ -315,6 +315,7 @@ def _build_accuracy_html(
     records: list[AccuracyRecord],
     stats: dict,
     roi_stats: dict | None = None,
+    related_links: dict[str, dict] | None = None,
 ) -> str:
     """Build note.com-compatible HTML for accuracy report."""
     total = len(records)
@@ -407,6 +408,12 @@ def _build_accuracy_html(
     )
 
     parts.append(_membership_upsell())
+
+    # Related articles
+    if related_links:
+        related = _build_related_articles("results", related_links)
+        if related:
+            parts.append(related)
 
     # Footer
     parts.append(ABOUT_SUIRI_AI)
@@ -506,6 +513,7 @@ def generate_accuracy_report(
     records: list[AccuracyRecord],
     stats: dict,
     roi_stats: dict | None = None,
+    related_links: dict[str, dict] | None = None,
 ) -> tuple[str, str, list[str]]:
     """Generate a note.com accuracy report article.
 
@@ -514,6 +522,7 @@ def generate_accuracy_report(
         records: List of accuracy records from get_accuracy_for_date()
         stats: Cumulative stats from get_stats()
         roi_stats: Optional ROI stats for the date
+        related_links: Optional related article links for cross-linking
 
     Returns:
         Tuple of (title, html_body, hashtags)
@@ -531,7 +540,9 @@ def generate_accuracy_report(
         f"競艇AI予想 結果｜{venue_str}全{num_venues}場"
         f"【的中率{hit_1st_pct}%】{date_short} — 水理AI"
     )
-    html_body = _build_accuracy_html(race_date, records, stats, roi_stats=roi_stats)
+    html_body = _build_accuracy_html(
+        race_date, records, stats, roi_stats=roi_stats, related_links=related_links
+    )
 
     hashtags = _build_hashtags(venue_names=venue_names[:3], article_type="results")
 

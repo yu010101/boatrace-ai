@@ -614,88 +614,108 @@ class NoteClient:
             }""", image_b64)
             log.warning("[eyecatch] Interceptors installed (showOpenFilePicker + input.click)")
 
-            # Probe the button's React component and click handlers
-            react_info = await page.evaluate("""() => {
+            # onClick is a toggle: ()=>d(!c). Click ONCE to open dropdown UI.
+            log.warning("[eyecatch] Clicking button once (toggle open)...")
+            await eyecatch_btn.first.click()
+            await asyncio.sleep(2)
+
+            # Snapshot DOM after click: look for new elements
+            after_click = await page.evaluate("""() => {
+                const info = {};
+                info.file_inputs = document.querySelectorAll('input[type="file"]').length;
+                info.modals = document.querySelectorAll('.ReactModal__Overlay').length;
+
+                // Look for dropdown/menu/popover elements
+                const candidates = document.querySelectorAll(
+                    'section, [role="menu"], [role="listbox"], [role="dialog"], ' +
+                    'div[class*="dropdown"], div[class*="popover"], div[class*="menu"], ' +
+                    'ul[class*="menu"], div[class*="panel"]'
+                );
+                info.candidates = Array.from(candidates).map(el => {
+                    const rect = el.getBoundingClientRect();
+                    return {
+                        tag: el.tagName,
+                        role: el.getAttribute('role') || '',
+                        cls: el.className?.toString().substring(0, 120) || '',
+                        text: el.textContent?.trim().substring(0, 200) || '',
+                        visible: rect.width > 0 && rect.height > 0,
+                        rect: {t: Math.round(rect.top), l: Math.round(rect.left),
+                               w: Math.round(rect.width), h: Math.round(rect.height)},
+                    };
+                }).filter(c => c.visible);
+
+                // Also check for new buttons/links near the eyecatch button area
                 const btn = document.querySelector('button[aria-label="画像を追加"]');
-                if (!btn) return {error: 'no button'};
-                const info = {visible: btn.offsetParent !== null, disabled: btn.disabled};
-
-                // Traverse React fiber for onClick handlers
-                const fiberKey = Object.keys(btn).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
-                if (fiberKey) {
-                    let fiber = btn[fiberKey];
-                    const handlers = [];
-                    let depth = 0;
-                    while (fiber && depth < 15) {
-                        const props = fiber.memoizedProps || fiber.pendingProps || {};
-                        if (props.onClick) {
-                            handlers.push({
-                                depth,
-                                type: typeof fiber.type === 'string' ? fiber.type : (fiber.type?.name || fiber.type?.displayName || 'Component'),
-                                onClick_str: props.onClick.toString().substring(0, 200),
-                            });
+                if (btn) {
+                    const btnRect = btn.getBoundingClientRect();
+                    const nearby = [];
+                    for (const el of document.querySelectorAll('button, a, [role="menuitem"], label')) {
+                        const r = el.getBoundingClientRect();
+                        // Within 300px of the eyecatch button
+                        if (r.width > 0 && Math.abs(r.top - btnRect.top) < 300 && Math.abs(r.left - btnRect.left) < 300) {
+                            const text = el.textContent?.trim() || '';
+                            const aria = el.getAttribute('aria-label') || '';
+                            if (text || aria) {
+                                nearby.push({tag: el.tagName, text: text.substring(0, 50), aria, t: Math.round(r.top), l: Math.round(r.left)});
+                            }
                         }
-                        fiber = fiber.return;
-                        depth++;
                     }
-                    info.handlers = handlers;
+                    info.nearby_elements = nearby;
                 }
-
-                // Check for event listeners via getEventListeners (Chrome DevTools only, may not work)
-                info.parentTag = btn.parentElement?.tagName;
-                info.parentClass = btn.parentElement?.className?.substring(0, 100);
 
                 return info;
             }""")
-            log.warning("[eyecatch] React info: %s", json.dumps(react_info, ensure_ascii=False)[:600])
+            log.warning("[eyecatch] After click: %s", json.dumps(after_click, ensure_ascii=False)[:800])
 
-            # Try multiple click approaches
-            click_methods = [
-                ("playwright_click", None),
-                ("force_click", None),
-                ("js_click", None),
-                ("js_dispatch", None),
-            ]
-
-            for method_name, _ in click_methods:
-                # Reset tracker
-                await page.evaluate("() => { window.__eyecatchMethod = null; }")
-
-                if method_name == "playwright_click":
-                    await eyecatch_btn.first.click()
-                elif method_name == "force_click":
-                    await eyecatch_btn.first.click(force=True)
-                elif method_name == "js_click":
-                    await page.evaluate("""() => {
-                        document.querySelector('button[aria-label="画像を追加"]').click();
-                    }""")
-                elif method_name == "js_dispatch":
-                    await page.evaluate("""() => {
-                        const btn = document.querySelector('button[aria-label="画像を追加"]');
-                        btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
-                    }""")
-
-                await asyncio.sleep(3)
-                method = await page.evaluate("() => window.__eyecatchMethod")
-                log.warning("[eyecatch] %s → method=%s", method_name, method)
-
-                if method:
-                    await asyncio.sleep(4)
-                    await self._handle_crop_modal(page)
-                    log.warning("[eyecatch] Success via %s: %s", method_name, eyecatch_path.name)
-                    break
-
-                # Check for modals or file inputs that appeared
-                state = await page.evaluate("""() => ({
-                    fi: document.querySelectorAll('input[type="file"]').length,
-                    modals: document.querySelectorAll('.ReactModal__Overlay').length,
-                    sections: document.querySelectorAll('section').length,
-                })""")
-                if state.get("fi", 0) > 0 or state.get("modals", 0) > 0:
-                    log.warning("[eyecatch] %s produced state change: %s", method_name, state)
-                    break
+            # If file input appeared after toggle, set files
+            if after_click.get("file_inputs", 0) > 0:
+                file_inputs = page.locator('input[type="file"]')
+                await file_inputs.first.set_input_files(str(eyecatch_path))
+                await asyncio.sleep(4)
+                await self._handle_crop_modal(page)
+                log.warning("[eyecatch] Set via file input after toggle")
+            elif after_click.get("candidates"):
+                # Look for upload/image option in the dropdown
+                for candidate in after_click["candidates"]:
+                    text = candidate.get("text", "")
+                    if any(kw in text for kw in ["アップロード", "画像を選択", "ファイル", "upload"]):
+                        log.warning("[eyecatch] Found upload option: %s", text[:50])
+                        # Click this option
+                        upload_el = page.locator(f"text={text[:20]}")
+                        if await upload_el.count() > 0:
+                            try:
+                                async with page.expect_file_chooser(timeout=5000) as fc_info:
+                                    await upload_el.first.click()
+                                file_chooser = await fc_info.value
+                                await file_chooser.set_files(str(eyecatch_path))
+                                await asyncio.sleep(4)
+                                await self._handle_crop_modal(page)
+                                log.warning("[eyecatch] Set via dropdown upload option")
+                            except Exception as e:
+                                log.warning("[eyecatch] Upload option click failed: %s", e)
+                        break
+                else:
+                    # Try clicking each candidate's first button/link
+                    for candidate in after_click["candidates"]:
+                        ctext = candidate.get("text", "")[:30]
+                        if ctext:
+                            btn_in_menu = page.locator(f'section >> button, [role="menu"] >> button').first
+                            try:
+                                if await btn_in_menu.count() > 0:
+                                    async with page.expect_file_chooser(timeout=3000) as fc_info:
+                                        await btn_in_menu.click()
+                                    file_chooser = await fc_info.value
+                                    await file_chooser.set_files(str(eyecatch_path))
+                                    await asyncio.sleep(4)
+                                    await self._handle_crop_modal(page)
+                                    log.warning("[eyecatch] Set via menu button")
+                                    break
+                            except Exception:
+                                pass
+                    else:
+                        log.warning("[eyecatch] Could not find upload trigger in dropdown")
             else:
-                log.warning("[eyecatch] All click methods failed")
+                log.warning("[eyecatch] No UI appeared after button click")
 
             # Cleanup
             await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")

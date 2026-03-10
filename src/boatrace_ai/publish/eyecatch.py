@@ -50,10 +50,24 @@ def _build_eyecatch_html(
             f'margin-top: 12px; letter-spacing: 2px;">{subtitle}</div>'
         )
 
-    # Truncate long titles and add line breaks
+    # Smart title truncation — split at natural break points
     display_title = title
-    if len(display_title) > 40:
-        display_title = display_title[:40] + "..."
+    # Remove trailing " — 水理AI" for cleaner display
+    if " — 水理AI" in display_title:
+        display_title = display_title.replace(" — 水理AI", "")
+    if len(display_title) > 45:
+        display_title = display_title[:45] + "..."
+
+    # Article type label for badge
+    type_labels = {
+        "prediction": "AI\u4e88\u6e2c",   # AI予測
+        "grades": "\u5168\u30ec\u30fc\u30b9\u4e88\u6e2c",  # 全レース予測
+        "results": "\u7d50\u679c\u30ec\u30dd\u30fc\u30c8",  # 結果レポート
+        "midday": "\u5348\u524d\u901f\u5831",  # 午前速報
+        "track_record": "\u5b9f\u7e3e\u63a8\u79fb",  # 実績推移
+        "membership": "\u30e1\u30f3\u30d0\u30fc\u30b7\u30c3\u30d7",  # メンバーシップ
+    }
+    badge_text = type_labels.get(article_type, "AI\u4e88\u6e2c")
 
     return f"""<!DOCTYPE html>
 <html>
@@ -64,7 +78,7 @@ def _build_eyecatch_html(
   body {{
     width: {WIDTH}px;
     height: {HEIGHT}px;
-    background: linear-gradient(135deg, {COLOR_MAIN} 0%, {COLOR_BG} 100%);
+    background: linear-gradient(160deg, {COLOR_MAIN} 0%, #0F2035 40%, {COLOR_BG} 100%);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -74,58 +88,102 @@ def _build_eyecatch_html(
     overflow: hidden;
     position: relative;
   }}
-  /* Decorative accent line at top */
+  /* Accent bar at top */
   .accent-top {{
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    height: 6px;
-    background: linear-gradient(90deg, {COLOR_ACCENT}, transparent);
+    height: 5px;
+    background: linear-gradient(90deg, {COLOR_ACCENT}, {COLOR_ACCENT}60, transparent);
   }}
-  /* Decorative accent line at bottom */
-  .accent-bottom {{
+  /* Wave decoration at bottom */
+  .wave {{
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    height: 6px;
-    background: linear-gradient(90deg, transparent, {COLOR_ACCENT});
+    height: 120px;
+    opacity: 0.08;
+  }}
+  .wave svg {{
+    width: 100%;
+    height: 100%;
+  }}
+  /* Glow circle behind icon */
+  .glow {{
+    position: absolute;
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle, {icon_color}18, transparent 70%);
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -65%);
+    pointer-events: none;
+  }}
+  /* Badge */
+  .badge {{
+    display: inline-block;
+    padding: 6px 24px;
+    border: 1.5px solid {icon_color}90;
+    border-radius: 4px;
+    font-size: 18px;
+    font-weight: 700;
+    color: {icon_color};
+    letter-spacing: 3px;
+    margin-bottom: 24px;
+    text-transform: uppercase;
   }}
   .icon {{
-    font-size: 80px;
+    font-size: 72px;
     color: {icon_color};
-    margin-bottom: 20px;
-    text-shadow: 0 0 30px {icon_color}40;
+    margin-bottom: 16px;
+    text-shadow: 0 0 40px {icon_color}30;
+    position: relative;
+    z-index: 1;
   }}
   .title {{
-    font-size: 42px;
+    font-size: 40px;
     font-weight: 900;
     color: {COLOR_TEXT};
     text-align: center;
-    padding: 0 80px;
-    line-height: 1.4;
+    padding: 0 100px;
+    line-height: 1.45;
     max-width: 1100px;
     word-break: break-all;
+    position: relative;
+    z-index: 1;
   }}
   .brand {{
     position: absolute;
-    bottom: 40px;
-    right: 60px;
-    font-size: 32px;
-    font-weight: 700;
+    bottom: 30px;
+    right: 50px;
+    font-size: 36px;
+    font-weight: 900;
     color: {COLOR_ACCENT};
-    letter-spacing: 4px;
+    letter-spacing: 5px;
   }}
   .brand-sub {{
     position: absolute;
-    bottom: 80px;
-    right: 60px;
-    font-size: 16px;
-    color: {COLOR_TEXT}80;
-    letter-spacing: 2px;
+    bottom: 72px;
+    right: 50px;
+    font-size: 14px;
+    color: {COLOR_TEXT}60;
+    letter-spacing: 3px;
+    text-transform: uppercase;
   }}
-  /* Subtle grid pattern */
+  /* Vertical accent line left */
+  .side-line {{
+    position: absolute;
+    left: 40px;
+    top: 60px;
+    bottom: 60px;
+    width: 3px;
+    background: linear-gradient(180deg, {COLOR_ACCENT}40, transparent);
+    border-radius: 2px;
+  }}
+  /* Subtle data grid */
   .grid-overlay {{
     position: absolute;
     top: 0;
@@ -133,17 +191,25 @@ def _build_eyecatch_html(
     right: 0;
     bottom: 0;
     background-image:
-      linear-gradient({COLOR_ACCENT}08 1px, transparent 1px),
-      linear-gradient(90deg, {COLOR_ACCENT}08 1px, transparent 1px);
-    background-size: 40px 40px;
+      linear-gradient({COLOR_ACCENT}06 1px, transparent 1px),
+      linear-gradient(90deg, {COLOR_ACCENT}06 1px, transparent 1px);
+    background-size: 50px 50px;
     pointer-events: none;
   }}
 </style>
 </head>
 <body>
   <div class="accent-top"></div>
-  <div class="accent-bottom"></div>
   <div class="grid-overlay"></div>
+  <div class="side-line"></div>
+  <div class="glow"></div>
+  <div class="wave">
+    <svg viewBox="0 0 1280 120" preserveAspectRatio="none">
+      <path d="M0,60 C320,120 640,0 960,60 C1120,90 1200,30 1280,60 L1280,120 L0,120 Z"
+            fill="{COLOR_ACCENT}" />
+    </svg>
+  </div>
+  <div class="badge">{badge_text}</div>
   <div class="icon">{icon_text}</div>
   <div class="title">{display_title}</div>
   {subtitle_html}

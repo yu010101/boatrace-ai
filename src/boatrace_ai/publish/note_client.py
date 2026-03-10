@@ -463,7 +463,11 @@ class NoteClient:
 
             log.info("Editor loaded with content")
 
-            # Step 1: Click "公開に進む" button (in editor header)
+            # Step 1: Set eyecatch image in editor (before publish)
+            if eyecatch_path and eyecatch_path.exists():
+                await self._set_eyecatch_in_editor(page, eyecatch_path)
+
+            # Step 2: Click "公開に進む" button (in editor header)
             publish_btn = await self._find_button(
                 page, ["公開に進む", "公開設定", "公開"]
             )
@@ -477,10 +481,6 @@ class NoteClient:
             await page.wait_for_load_state("networkidle")
             await asyncio.sleep(2)
             log.info("Navigated to publish page: %s", page.url)
-
-            # Step 2: Set eyecatch image via file input
-            if eyecatch_path and eyecatch_path.exists():
-                await self._set_eyecatch(page, eyecatch_path)
 
             # Step 3: Set hashtags on publish settings page
             if hashtags:
@@ -536,33 +536,66 @@ class NoteClient:
 
         return result
 
-    async def _set_eyecatch(self, page, eyecatch_path: Path) -> None:
-        """Set eyecatch image on the publish settings page via file input.
+    async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
+        """Set eyecatch image by clicking the image icon above the title in the editor.
 
-        note.com's publish page has a hidden file input for the eyecatch image.
-        We locate it and set the file directly.
+        note.com's editor has an eyecatch icon (camera/image icon) above the title.
+        Clicking it reveals a hidden file input for the cover image.
         """
         try:
-            # Debug: log page URL and take screenshot for diagnostics
-            log.info("Setting eyecatch on page: %s", page.url)
+            log.info("Setting eyecatch in editor: %s", page.url)
 
-            # Try all file inputs on the page (note.com may hide them)
-            all_file_inputs = page.locator('input[type="file"]')
-            count = await all_file_inputs.count()
-            log.info("Found %d file input(s) on page", count)
+            # The eyecatch icon is above the title. Find it by looking for
+            # clickable elements in the top area of the editor content.
+            # It's typically an SVG icon or button near the top.
+            eyecatch_btn = await page.evaluate("""() => {
+                // Find all clickable elements in the upper part of the editor
+                const els = document.querySelectorAll('button, [role="button"], a, div[class*="eyecatch"], div[class*="cover"], div[class*="thumbnail"]');
+                for (const el of els) {
+                    const rect = el.getBoundingClientRect();
+                    // The eyecatch icon is typically in the top area (y < 200)
+                    // and contains an SVG or image-related element
+                    if (rect.top > 50 && rect.top < 200 && rect.width > 20 && rect.width < 150) {
+                        const hasSvg = el.querySelector('svg') !== null;
+                        const text = el.textContent?.trim() || '';
+                        if (hasSvg && text.length < 5) {
+                            return {top: rect.top, left: rect.left, width: rect.width, height: rect.height};
+                        }
+                    }
+                }
+                return null;
+            }""")
+
+            if eyecatch_btn:
+                # Click the eyecatch icon
+                x = eyecatch_btn["left"] + eyecatch_btn["width"] / 2
+                y = eyecatch_btn["top"] + eyecatch_btn["height"] / 2
+                await page.mouse.click(x, y)
+                await asyncio.sleep(2)
+                log.info("Clicked eyecatch icon at (%d, %d)", x, y)
+            else:
+                # Fallback: click the area above the title textarea
+                title_el = await page.query_selector("textarea")
+                if title_el:
+                    box = await title_el.bounding_box()
+                    if box:
+                        await page.mouse.click(box["x"] + box["width"] / 2, box["y"] - 60)
+                        await asyncio.sleep(2)
+                        log.info("Clicked area above title for eyecatch")
+
+            # After clicking, a file input should appear
+            file_inputs = page.locator('input[type="file"]')
+            count = await file_inputs.count()
+            log.info("Found %d file input(s) after clicking eyecatch area", count)
 
             if count > 0:
-                # Use the first file input found
-                await all_file_inputs.first.set_input_files(str(eyecatch_path))
-                await asyncio.sleep(3)  # Wait for upload to complete
-                log.info("Eyecatch image set via file input: %s", eyecatch_path.name)
-                return
+                await file_inputs.first.set_input_files(str(eyecatch_path))
+                await asyncio.sleep(4)  # Wait for upload
+                log.info("Eyecatch image set: %s", eyecatch_path.name)
+            else:
+                # Last resort: inject a file input and trigger upload via API interception
+                log.warning("file inputが見つかりません。アイキャッチ設定をスキップ")
 
-            # No file input found — log page HTML hints for debugging
-            html_snippet = await page.evaluate(
-                "() => document.body.innerHTML.substring(0, 2000)"
-            )
-            log.warning("file inputが見つかりません。ページHTML先頭: %s", html_snippet[:500])
         except Exception as e:
             log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)
 
@@ -736,7 +769,7 @@ class NoteClient:
             draft["id"], title, html_body, hashtags
         )
 
-        # Step 3: Publish via Playwright editor (eyecatch set on publish page)
+        # Step 3: Publish via Playwright editor (eyecatch set in editor page)
         try:
             result = await self._publish_via_editor(
                 draft["key"], price, hashtags, eyecatch_path=eyecatch_path

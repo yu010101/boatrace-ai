@@ -467,6 +467,9 @@ class NoteClient:
             if eyecatch_path and eyecatch_path.exists():
                 await self._set_eyecatch_in_editor(page, eyecatch_path)
 
+            # Dismiss any modals left from eyecatch setting
+            await self._dismiss_modals(page)
+
             # Step 2: Click "公開に進む" button (in editor header)
             publish_btn = await self._find_button(
                 page, ["公開に進む", "公開設定", "公開"]
@@ -643,64 +646,59 @@ class NoteClient:
             except Exception:
                 pass
 
-            # Step 3: Handle CropModal that appears after image upload
-            # note.com shows a React modal with class "CropModal__overlay"
-            # We need to find and click the confirm/apply button in the modal
-            await self._handle_crop_modal(page)
+    async def _dismiss_modals(self, page) -> None:
+        """Dismiss any ReactModal overlays (CropModal, MessageModal, etc.).
 
-            log.info("Eyecatch image set: %s", eyecatch_path.name)
-
-        except Exception as e:
-            log.warning("アイキャッチ画像の設定に失敗（投稿は続行）: %s", e)
-
-    async def _handle_crop_modal(self, page) -> None:
-        """Handle the CropModal that appears after uploading an eyecatch image.
-
-        The modal has class 'CropModal__overlay' and contains confirm/apply buttons.
-        We click the confirm button to apply the crop and close the modal.
+        Finds confirm/OK buttons in modals and clicks them.
+        Falls back to pressing Escape if no button found.
         """
-        # Wait for crop modal to appear
-        modal = page.locator('.ReactModal__Overlay, [class*="CropModal"]')
-        try:
-            await modal.first.wait_for(state="visible", timeout=5000)
-            log.info("CropModal detected, looking for confirm button...")
-        except Exception:
-            log.info("No CropModal appeared, continuing...")
-            return
+        for attempt in range(3):  # Try up to 3 modals
+            modal = page.locator('.ReactModal__Overlay')
+            try:
+                await modal.first.wait_for(state="visible", timeout=3000)
+            except Exception:
+                return  # No modal visible
 
-        await asyncio.sleep(1)
+            # Get modal class for logging
+            modal_cls = await modal.first.get_attribute("class") or ""
+            log.warning("[modal] Detected: %s", modal_cls[:80])
+            await asyncio.sleep(1)
 
-        # Try multiple button text options for the confirm button
-        confirm_texts = ["適用", "完了", "保存", "OK", "決定", "確定", "設定"]
-        for text in confirm_texts:
-            btn = page.locator(f'.ReactModal__Content button:has-text("{text}")')
-            if await btn.count() > 0 and await btn.first.is_visible():
-                log.info("Clicking CropModal confirm button: '%s'", text)
-                await btn.first.click()
-                await asyncio.sleep(2)
-                return
+            # Try confirm button texts
+            confirm_texts = ["適用", "完了", "保存", "OK", "決定", "確定", "設定", "はい"]
+            clicked = False
+            for text in confirm_texts:
+                btn = page.locator(f'.ReactModal__Content button:has-text("{text}")')
+                if await btn.count() > 0 and await btn.first.is_visible():
+                    log.warning("[modal] Clicking button: '%s'", text)
+                    await btn.first.click()
+                    await asyncio.sleep(2)
+                    clicked = True
+                    break
 
-        # Fallback: click any visible button inside the modal content
-        modal_buttons = page.locator('.ReactModal__Content button')
-        count = await modal_buttons.count()
-        log.info("CropModal has %d buttons", count)
-        for i in range(count):
-            btn = modal_buttons.nth(i)
-            if await btn.is_visible():
-                text = (await btn.text_content() or "").strip()
-                log.info("CropModal button[%d]: '%s'", i, text)
-                # Skip cancel/close buttons
-                if any(w in text for w in ["キャンセル", "閉じる", "戻る", "×"]):
-                    continue
-                log.info("Clicking CropModal button: '%s'", text)
-                await btn.first.click()
-                await asyncio.sleep(2)
-                return
+            if not clicked:
+                # Try any non-cancel button
+                modal_buttons = page.locator('.ReactModal__Content button')
+                count = await modal_buttons.count()
+                for i in range(count):
+                    btn = modal_buttons.nth(i)
+                    if await btn.is_visible():
+                        text = (await btn.text_content() or "").strip()
+                        if any(w in text for w in ["キャンセル", "閉じる", "戻る", "×"]):
+                            continue
+                        log.warning("[modal] Clicking fallback button: '%s'", text)
+                        await btn.click()
+                        await asyncio.sleep(2)
+                        clicked = True
+                        break
 
-        # Last resort: press Escape to dismiss
-        log.warning("CropModal confirm button not found, pressing Escape")
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(1)
+            if not clicked:
+                log.warning("[modal] No button found, pressing Escape")
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(1)
+
+    # Keep old name as alias for backward compatibility in _set_eyecatch_in_editor
+    _handle_crop_modal = _dismiss_modals
 
     async def _find_button(self, page, text_options: list[str]):
         """Find a visible button by text content, trying multiple options."""

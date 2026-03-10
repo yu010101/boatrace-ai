@@ -539,12 +539,11 @@ class NoteClient:
     async def _set_eyecatch_in_editor(self, page, eyecatch_path: Path) -> None:
         """Set eyecatch image via the editor page.
 
-        Strategy: Set up MutationObserver to capture dynamically created file inputs,
-        then click the eyecatch button. The button creates a transient <input type="file">,
-        clicks it (opening file dialog), then removes it. We intercept this by:
-        1. Monkey-patching HTMLInputElement.click to prevent the native dialog
-        2. Capturing the dynamically created input
-        3. Setting files on it via Playwright
+        note.com likely uses window.showOpenFilePicker() (File System Access API)
+        which Playwright cannot intercept via expect_file_chooser.
+
+        Strategy: Mock showOpenFilePicker to return our file data, then click the button.
+        Also intercept input.click() as a secondary strategy.
         """
         try:
             eyecatch_btn = page.locator('button[aria-label="画像を追加"]')
@@ -552,93 +551,101 @@ class NoteClient:
                 log.warning("[eyecatch] ボタンが見つかりません。スキップ")
                 return
 
-            # Install interceptor: monkey-patch input.click() to prevent native dialog
-            # and capture the dynamically created file input
-            await page.evaluate("""() => {
-                window.__eyecatchInputCaptured = null;
+            # Read the eyecatch file and encode as base64 for JS injection
+            import base64
+            image_data = eyecatch_path.read_bytes()
+            image_b64 = base64.b64encode(image_data).decode()
+
+            # Install comprehensive interceptors
+            await page.evaluate("""(imageB64) => {
+                // Convert base64 to File object
+                const byteChars = atob(imageB64);
+                const byteArray = new Uint8Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) {
+                    byteArray[i] = byteChars.charCodeAt(i);
+                }
+                const blob = new Blob([byteArray], {type: 'image/png'});
+                const file = new File([blob], 'eyecatch.png', {type: 'image/png'});
+
+                window.__eyecatchFile = file;
+                window.__eyecatchMethod = null;
+
+                // Strategy A: Mock showOpenFilePicker (File System Access API)
+                if (window.showOpenFilePicker) {
+                    const origPicker = window.showOpenFilePicker;
+                    window.showOpenFilePicker = async function(options) {
+                        window.__eyecatchMethod = 'showOpenFilePicker';
+                        // Return a mock FileSystemFileHandle
+                        return [{
+                            kind: 'file',
+                            name: 'eyecatch.png',
+                            getFile: async () => file,
+                            createWritable: async () => { throw new Error('read-only'); },
+                        }];
+                    };
+                }
+
+                // Strategy B: Intercept input.click()
                 const origClick = HTMLInputElement.prototype.click;
                 HTMLInputElement.prototype.click = function() {
                     if (this.type === 'file') {
-                        window.__eyecatchInputCaptured = this;
-                        // Don't call origClick - prevent native dialog
-                        // Keep the input in DOM so Playwright can set files
+                        window.__eyecatchMethod = 'input.click';
+                        // Create a DataTransfer with our file
+                        const dt = new DataTransfer();
+                        dt.items.add(file);
+                        this.files = dt.files;
+                        // Keep in DOM
                         if (!this.parentElement) {
                             this.style.display = 'none';
                             document.body.appendChild(this);
                         }
+                        // Dispatch change event
+                        this.dispatchEvent(new Event('change', {bubbles: true}));
+                        this.dispatchEvent(new Event('input', {bubbles: true}));
                         return;
                     }
                     return origClick.call(this);
                 };
-            }""")
-            log.warning("[eyecatch] Installed input.click interceptor")
 
-            # Click the eyecatch button - this should trigger the interceptor
-            await eyecatch_btn.first.click()
-            await asyncio.sleep(2)
-
-            # Check if we captured a file input
-            captured = await page.evaluate("""() => {
-                const inp = window.__eyecatchInputCaptured;
-                if (!inp) return null;
-                return {
-                    type: inp.type,
-                    accept: inp.accept || '',
-                    inDOM: !!inp.parentElement,
-                    id: inp.id || '_no_id',
+                window.__eyecatchCleanup = () => {
+                    delete HTMLInputElement.prototype.click;
+                    if (window.__eyecatchFile) delete window.__eyecatchFile;
                 };
-            }""")
-            log.warning("[eyecatch] Captured input: %s", json.dumps(captured, ensure_ascii=False) if captured else "null")
+            }""", image_b64)
+            log.warning("[eyecatch] Interceptors installed (showOpenFilePicker + input.click)")
 
-            if captured:
-                # Set a unique ID so we can target it with Playwright
-                await page.evaluate("""() => {
-                    const inp = window.__eyecatchInputCaptured;
-                    inp.id = '_pw_eyecatch_file';
-                }""")
-                pw_input = page.locator('#_pw_eyecatch_file')
-                await pw_input.set_input_files(str(eyecatch_path))
-                await asyncio.sleep(3)
+            # Click the eyecatch button
+            await eyecatch_btn.first.click()
+            await asyncio.sleep(4)
 
-                # Dispatch change event to trigger the upload handler
-                await page.evaluate("""() => {
-                    const inp = window.__eyecatchInputCaptured;
-                    inp.dispatchEvent(new Event('change', {bubbles: true}));
-                }""")
+            # Check which method was triggered
+            method = await page.evaluate("() => window.__eyecatchMethod")
+            log.warning("[eyecatch] Triggered method: %s", method)
+
+            if method:
+                # Wait for upload to process
                 await asyncio.sleep(4)
-                log.warning("[eyecatch] File set + change dispatched")
 
-                # Handle CropModal
+                # Handle CropModal if it appears
                 await self._handle_crop_modal(page)
-                log.warning("[eyecatch] Eyecatch image set: %s", eyecatch_path.name)
+                log.warning("[eyecatch] Set via %s: %s", method, eyecatch_path.name)
             else:
-                # Fallback: try expect_file_chooser directly
-                log.warning("[eyecatch] No captured input. Trying expect_file_chooser...")
-                try:
-                    # Restore original click first
-                    await page.evaluate("""() => {
-                        delete HTMLInputElement.prototype.click;
-                    }""")
-                    async with page.expect_file_chooser(timeout=8000) as fc_info:
-                        await eyecatch_btn.first.click()
-                    file_chooser = await fc_info.value
-                    await file_chooser.set_files(str(eyecatch_path))
-                    await asyncio.sleep(4)
-                    await self._handle_crop_modal(page)
-                    log.warning("[eyecatch] Set via file chooser fallback")
-                except Exception as e:
-                    log.warning("[eyecatch] All strategies failed: %s", e)
+                # Neither interceptor triggered - probe what happened
+                probe = await page.evaluate("""() => ({
+                    hasShowOpenFilePicker: typeof window.showOpenFilePicker === 'function',
+                    file_inputs: document.querySelectorAll('input[type="file"]').length,
+                    modals: document.querySelectorAll('.ReactModal__Overlay').length,
+                })""")
+                log.warning("[eyecatch] No method triggered. Probe: %s",
+                           json.dumps(probe, ensure_ascii=False))
 
-            # Restore original click
-            await page.evaluate("""() => {
-                delete HTMLInputElement.prototype.click;
-            }""")
+            # Cleanup
+            await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")
 
         except Exception as e:
             log.warning("[eyecatch] 設定失敗（投稿は続行）: %s", e)
-            # Restore original click on error
             try:
-                await page.evaluate("() => { delete HTMLInputElement.prototype.click; }")
+                await page.evaluate("() => { if (window.__eyecatchCleanup) window.__eyecatchCleanup(); }")
             except Exception:
                 pass
 

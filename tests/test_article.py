@@ -17,6 +17,7 @@ from boatrace_ai.publish.article import (
     _build_html,
     _build_markdown,
     _build_related_articles,
+    _build_trend_text,
     generate_accuracy_report,
     generate_article,
     generate_membership_article,
@@ -691,6 +692,21 @@ class TestChartInAccuracyHtml:
             "2026-03-01", _make_accuracy_records(), _make_stats(),
         )
         assert "<img" not in html
+
+    def test_text_trend_fallback(self) -> None:
+        """When no chart_url but accuracy_trend is provided, text trend appears."""
+        html = _build_accuracy_html(
+            "2026-03-01", _make_accuracy_records(), _make_stats(),
+            accuracy_trend=_make_accuracy_trend(), roi_trend=_make_roi_trend(),
+        )
+        assert "直近7日間の推移" in html
+        assert "█" in html  # Unicode bar
+
+    def test_trend_text_contains_dates(self) -> None:
+        text = _build_trend_text(_make_accuracy_trend(), _make_roi_trend())
+        assert "3/5" in text
+        assert "3/4" in text
+        assert "ROI" in text
 
 
 # ── Title variation (施策4) ──────────────────────────────────

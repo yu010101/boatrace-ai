@@ -417,6 +417,41 @@ def _build_daily_trends(
     return "\n".join(parts) if len(parts) > 1 else ""
 
 
+def _build_trend_text(
+    accuracy_trend: list[dict],
+    roi_trend: list[dict],
+) -> str:
+    """Build text-based 7-day trend display using note.com-safe HTML."""
+    if not accuracy_trend:
+        return ""
+    # Show last 7 days
+    days = list(reversed(accuracy_trend[:7]))
+    roi_map = {r["date"]: r for r in roi_trend} if roi_trend else {}
+
+    parts: list[str] = []
+    parts.append("<h3>直近7日間の推移</h3>")
+
+    for acc in days:
+        d = acc["date"]
+        date_label = _format_date_short(d)
+        hit_pct = round(acc["hit_1st_rate"] * 100)
+        tri_count = acc.get("hit_tri", 0)
+        roi_day = roi_map.get(d)
+        roi_pct = round(roi_day["roi"] * 100) if roi_day else 0
+
+        # Visual bar using Unicode block chars (safe in note.com)
+        bar_len = max(1, hit_pct // 5)  # 0-100% → 0-20 chars
+        bar = "█" * bar_len
+
+        roi_label = f" ROI {roi_pct}%" if roi_day else ""
+        parts.append(
+            f"<p><strong>{date_label}</strong> {bar} {hit_pct}%"
+            f"（3連単{tri_count}本{roi_label}）</p>"
+        )
+
+    return "\n".join(parts)
+
+
 def _build_accuracy_html(
     race_date: str,
     records: list[AccuracyRecord],
@@ -426,6 +461,8 @@ def _build_accuracy_html(
     chart_url: str | None = None,
     hit_analyses: dict[tuple[int, int], str] | None = None,
     results_data: list[dict] | None = None,
+    accuracy_trend: list[dict] | None = None,
+    roi_trend: list[dict] | None = None,
 ) -> str:
     """Build note.com-compatible HTML for accuracy report."""
     total = len(records)
@@ -465,9 +502,13 @@ def _build_accuracy_html(
             f" / 損益 ¥{profit:+,} {profit_label}）</p>"
         )
 
-    # ── Chart image (30-day trend) ──
+    # ── Trend display (chart image or text fallback) ──
     if chart_url:
         parts.append(f'<p><img src="{chart_url}" alt="直近30日の的中率・ROI推移"></p>')
+    elif accuracy_trend:
+        trend_text = _build_trend_text(accuracy_trend, roi_trend or [])
+        if trend_text:
+            parts.append(trend_text)
 
     # ── Highlight: trifecta hits ──
     tri_hits = [r for r in records if r["hit_trifecta"]]
@@ -653,6 +694,8 @@ def generate_accuracy_report(
     chart_url: str | None = None,
     hit_analyses: dict[tuple[int, int], str] | None = None,
     results_data: list[dict] | None = None,
+    accuracy_trend: list[dict] | None = None,
+    roi_trend: list[dict] | None = None,
 ) -> tuple[str, str, list[str]]:
     """Generate a note.com accuracy report article.
 
@@ -665,6 +708,8 @@ def generate_accuracy_report(
         chart_url: Optional URL of uploaded stats chart image
         hit_analyses: Optional dict mapping (stadium, race) -> analysis text
         results_data: Optional list of result dicts for daily trend analysis
+        accuracy_trend: Optional 30-day accuracy trend for text-based chart
+        roi_trend: Optional 30-day ROI trend for text-based chart
 
     Returns:
         Tuple of (title, html_body, hashtags)
@@ -708,6 +753,7 @@ def generate_accuracy_report(
     html_body = _build_accuracy_html(
         race_date, records, stats, roi_stats=roi_stats, related_links=related_links,
         chart_url=chart_url, hit_analyses=hit_analyses, results_data=results_data,
+        accuracy_trend=accuracy_trend, roi_trend=roi_trend,
     )
 
     hashtags = _build_hashtags(venue_names=venue_names[:3], article_type="results")

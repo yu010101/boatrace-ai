@@ -1013,7 +1013,9 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
     # Step 5: Generate report (with ROI + related links + new data)
     related_links = _get_related_links("grades", "track_record", "midday")
 
-    # Step 5.5: Generate stats chart (only for publishing, not dry-run)
+    # Step 5.5: Get trend data for chart/text display
+    accuracy_trend = get_accuracy_trend(30)
+    roi_trend = get_roi_trend(30)
     chart_url = None
 
     if dry_run:
@@ -1021,6 +1023,7 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
             target_str, records, stats, roi_stats=roi_stats,
             related_links=related_links,
             hit_analyses=hit_analyses, results_data=results_data,
+            accuracy_trend=accuracy_trend, roi_trend=roi_trend,
         )
         md_text = _build_accuracy_markdown(target_str, records, stats, roi_stats=roi_stats)
         display_accuracy_preview(title, md_text)
@@ -1032,22 +1035,21 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
         with console.status("[bold green]note.com にログイン確認中..."):
             await note_client.ensure_logged_in()
 
-        # Generate chart image for publishing
+        # Try chart image upload (fallback to text-based trend in article)
         try:
             from boatrace_ai.publish.eyecatch import generate_stats_chart
 
-            accuracy_trend = get_accuracy_trend(30)
-            roi_trend = get_roi_trend(30)
             chart_path = await generate_stats_chart(accuracy_trend, roi_trend)
             if chart_path:
                 chart_url = await note_client.upload_image(chart_path)
         except Exception as e:
-            log.warning("グラフ画像の生成/アップロードに失敗（記事投稿は継続）: %s", e)
+            log.warning("グラフ画像の生成/アップロードに失敗（テキスト推移で代替）: %s", e)
 
         title, html_body, hashtags = generate_accuracy_report(
             target_str, records, stats, roi_stats=roi_stats,
             related_links=related_links,
             chart_url=chart_url, hit_analyses=hit_analyses, results_data=results_data,
+            accuracy_trend=accuracy_trend, roi_trend=roi_trend,
         )
 
         with console.status("[bold green]的中レポートを投稿中..."):

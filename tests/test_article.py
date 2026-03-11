@@ -327,14 +327,18 @@ class TestAccuracyReportHtml:
 
     def test_contains_hit_rates(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "1着的中: 2/3 (67%)" in html
-        assert "3連単的中: 1/3 (33%)" in html
+        assert "1着的中" in html
+        assert "2/3" in html
+        assert "67%" in html
+        assert "3連単的中" in html
+        assert "1/3" in html
+        assert "33%" in html
 
     def test_contains_highlight_section(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "本日のハイライト" in html
+        assert "3連単的中ハイライト" in html
         assert "桐生 1R" in html
-        assert "3連単的中!" in html
+        assert "3連単" in html
 
     def test_contains_hit_list_by_venue(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
@@ -654,7 +658,7 @@ class TestBuildDailyTrends:
 
     def test_contains_technique_distribution(self) -> None:
         trends = _build_daily_trends(_make_accuracy_records(), self._make_results_data())
-        assert "決まり手分布" in trends
+        assert "決まり手" in trends
         assert "逃げ" in trends
 
     def test_contains_inner_course_rate(self) -> None:
@@ -673,7 +677,7 @@ class TestBuildDailyTrends:
             results_data=results_data,
         )
         assert "本日の傾向分析" in html
-        assert "決まり手分布" in html
+        assert "決まり手" in html
 
 
 # ── Chart URL in accuracy HTML (施策2) ───────────────────────
@@ -700,7 +704,7 @@ class TestChartInAccuracyHtml:
             accuracy_trend=_make_accuracy_trend(), roi_trend=_make_roi_trend(),
         )
         assert "直近7日間の推移" in html
-        assert "█" in html  # Unicode bar
+        assert "■" in html  # Unicode bar
 
     def test_trend_text_contains_dates(self) -> None:
         text = _build_trend_text(_make_accuracy_trend(), _make_roi_trend())

@@ -360,7 +360,9 @@ def _build_daily_trends(
         return ""
 
     parts: list[str] = []
-    parts.append("<h3>本日の傾向分析</h3>")
+    parts.append("<h2>本日の傾向分析</h2>")
+
+    trend_items: list[str] = []
 
     # ── Technique distribution ──
     tech_counts: dict[str, int] = defaultdict(int)
@@ -373,9 +375,9 @@ def _build_daily_trends(
         tech_parts = []
         for name, count in sorted(tech_counts.items(), key=lambda x: -x[1]):
             pct = round(count / total_with_tech * 100)
-            tech_parts.append(f"{name}{count}本({pct}%)")
-        parts.append(
-            f"<p><strong>決まり手分布:</strong> {', '.join(tech_parts)}</p>"
+            tech_parts.append(f"{name} {count}本（{pct}%）")
+        trend_items.append(
+            f"<li><strong>決まり手</strong>　{'／'.join(tech_parts)}</li>"
         )
 
     # ── Inner course (1号艇) win rate ──
@@ -383,11 +385,15 @@ def _build_daily_trends(
     total_races = len(results_data)
     if total_races > 0:
         inner_pct = round(inner_wins / total_races * 100)
-        avg_label = "平均並み" if 45 <= inner_pct <= 55 else (
-            "高め（堅い日）" if inner_pct > 55 else "低め（荒れた日）"
-        )
-        parts.append(
-            f"<p><strong>1号艇1着率:</strong> {inner_pct}%（{inner_wins}/{total_races}）— {avg_label}</p>"
+        if inner_pct > 55:
+            avg_label = "▲ 高め（堅い日）"
+        elif inner_pct < 45:
+            avg_label = "▼ 低め（荒れた日）"
+        else:
+            avg_label = "― 平均並み"
+        trend_items.append(
+            f"<li><strong>1号艇1着率</strong>　{inner_pct}%"
+            f"（{inner_wins}/{total_races}）{avg_label}</li>"
         )
 
     # ── Best/worst venue ──
@@ -408,11 +414,17 @@ def _build_daily_trends(
         worst = ranked[-1]
         best_pct = round(best[1]["hit"] / best[1]["total"] * 100) if best[1]["total"] else 0
         worst_pct = round(worst[1]["hit"] / worst[1]["total"] * 100) if worst[1]["total"] else 0
-        parts.append(
-            f"<p><strong>場別的中率:</strong> "
-            f"最高 {best[0]} {best_pct}%（{best[1]['hit']}/{best[1]['total']}）/ "
-            f"最低 {worst[0]} {worst_pct}%（{worst[1]['hit']}/{worst[1]['total']}）</p>"
+        trend_items.append(
+            f"<li><strong>AI好調場</strong>　{best[0]} {best_pct}%"
+            f"（{best[1]['hit']}/{best[1]['total']}）</li>"
         )
+        trend_items.append(
+            f"<li><strong>AI苦戦場</strong>　{worst[0]} {worst_pct}%"
+            f"（{worst[1]['hit']}/{worst[1]['total']}）</li>"
+        )
+
+    if trend_items:
+        parts.append(f"<ul>{''.join(trend_items)}</ul>")
 
     return "\n".join(parts) if len(parts) > 1 else ""
 
@@ -424,30 +436,30 @@ def _build_trend_text(
     """Build text-based 7-day trend display using note.com-safe HTML."""
     if not accuracy_trend:
         return ""
-    # Show last 7 days
     days = list(reversed(accuracy_trend[:7]))
     roi_map = {r["date"]: r for r in roi_trend} if roi_trend else {}
 
     parts: list[str] = []
     parts.append("<h3>直近7日間の推移</h3>")
 
+    items: list[str] = []
     for acc in days:
         d = acc["date"]
         date_label = _format_date_short(d)
         hit_pct = round(acc["hit_1st_rate"] * 100)
         tri_count = acc.get("hit_tri", 0)
         roi_day = roi_map.get(d)
-        roi_pct = round(roi_day["roi"] * 100) if roi_day else 0
 
-        # Visual bar using Unicode block chars (safe in note.com)
-        bar_len = max(1, hit_pct // 5)  # 0-100% → 0-20 chars
-        bar = "█" * bar_len
+        # Visual bar
+        bar_len = max(1, hit_pct // 5)
+        bar = "■" * bar_len + "□" * (20 - bar_len)
 
-        roi_label = f" ROI {roi_pct}%" if roi_day else ""
-        parts.append(
-            f"<p><strong>{date_label}</strong> {bar} {hit_pct}%"
-            f"（3連単{tri_count}本{roi_label}）</p>"
+        roi_str = f"｜ROI {round(roi_day['roi'] * 100)}%" if roi_day else ""
+        items.append(
+            f"<li><strong>{date_label}</strong>　{bar}　{hit_pct}%"
+            f"（3連単 {tri_count}本{roi_str}）</li>"
         )
+    parts.append(f"<ul>{''.join(items)}</ul>")
 
     return "\n".join(parts)
 
@@ -478,112 +490,132 @@ def _build_accuracy_html(
 
     date_short = _format_date_short(race_date)
 
-    # ── Summary (first sentence = meta description for SEO) ──
+    # ━━━━ サマリー（SEOメタ + 数値一覧） ━━━━
     parts.append("<h2>ボートレースAI予想 本日の結果</h2>")
     parts.append(
-        f"<p>{date_short}は全{num_venues}場{total}レースを予測しました。"
-        f"1着的中率{hit_1st_pct}%（{hit_1st}/{total}）、"
-        f"3連単的中{hit_tri}本を記録しています。</p>"
-    )
-    parts.append(
-        f"<p><strong>1着的中: {hit_1st}/{total} ({hit_1st_pct}%) | "
-        f"3連単的中: {hit_tri}/{total} ({hit_tri_pct}%)</strong></p>"
+        f"<p>{date_short}は全{num_venues}場・{total}レースを予測。"
+        f"1着的中率 <strong>{hit_1st_pct}%</strong>、"
+        f"3連単的中 <strong>{hit_tri}本</strong> を記録しました。</p>"
     )
 
-    # ROI for the day
+    # Summary card as structured list
+    summary_items = [
+        f"<li>1着的中 … <strong>{hit_1st}/{total}（{hit_1st_pct}%）</strong></li>",
+        f"<li>3連単的中 … <strong>{hit_tri}/{total}（{hit_tri_pct}%）</strong></li>",
+    ]
     if roi_stats and roi_stats.get("total_bets", 0) > 0:
         roi_pct = round(roi_stats["roi"] * 100)
         profit = roi_stats["profit"]
-        profit_label = "プラス収支" if profit > 0 else "マイナス収支"
-        parts.append(
-            f"<p>本日ROI: <strong>{roi_pct}%</strong>"
-            f"（投資 ¥{roi_stats['total_invested']:,}"
-            f" → 払戻 ¥{roi_stats['total_payout']:,}"
-            f" / 損益 ¥{profit:+,} {profit_label}）</p>"
+        profit_mark = "+" if profit > 0 else ""
+        summary_items.append(
+            f"<li>ROI … <strong>{roi_pct}%</strong>"
+            f"（¥{roi_stats['total_invested']:,} → ¥{roi_stats['total_payout']:,}"
+            f"｜損益 {profit_mark}¥{profit:,}）</li>"
         )
+    parts.append(f"<ul>{''.join(summary_items)}</ul>")
 
-    # ── Trend display (chart image or text fallback) ──
+    parts.append("<hr>")
+
+    # ━━━━ 推移（チャート or テキスト） ━━━━
     if chart_url:
         parts.append(f'<p><img src="{chart_url}" alt="直近30日の的中率・ROI推移"></p>')
     elif accuracy_trend:
         trend_text = _build_trend_text(accuracy_trend, roi_trend or [])
         if trend_text:
             parts.append(trend_text)
+            parts.append("<hr>")
 
-    # ── Highlight: trifecta hits ──
+    # ━━━━ ハイライト: 3連単的中 ━━━━
     tri_hits = [r for r in records if r["hit_trifecta"]]
     if tri_hits:
         total_payout = sum(r.get("trifecta_payout", 0) for r in tri_hits)
         payout_note = ""
         if total_payout > 0:
-            payout_note = f" 合計払戻 <strong>¥{total_payout:,}</strong>（100円あたり）"
-        parts.append("<h3>本日のハイライト — 3連単的中</h3>")
+            payout_note = f"（合計払戻 <strong>¥{total_payout:,}</strong>）"
+        parts.append("<h2>3連単的中ハイライト</h2>")
         parts.append(
-            f"<p>本日は{len(tri_hits)}レースで3連単を的中。"
-            f"AIが着順まで正確に読み切ったレースです。{payout_note}</p>"
+            f"<p>{len(tri_hits)}レースで3連単を的中。"
+            f"AIが着順まで正確に読み切りました。{payout_note}</p>"
         )
-        # Deep analysis for top 3 hits (by payout desc)
+
         sorted_hits = sorted(tri_hits, key=lambda x: x.get("trifecta_payout", 0), reverse=True)
+        hit_items: list[str] = []
         for r in sorted_hits:
             stadium = STADIUMS.get(r["stadium_number"], str(r["stadium_number"]))
             payout = r.get("trifecta_payout", 0)
-            payout_str = f" <strong>¥{payout:,}</strong>" if payout > 0 else ""
-            # Add hit analysis if available
+            payout_str = f"　→ 払戻 <strong>¥{payout:,}</strong>" if payout > 0 else ""
+            # Analysis
             analysis_str = ""
             if hit_analyses:
                 key = (r["stadium_number"], r["race_number"])
                 analysis_str = hit_analyses.get(key, "")
-            parts.append(
-                f"<p><strong>{stadium} {r['race_number']}R — 3連単的中!</strong> "
-                f"予測 {r['predicted_trifecta']} → 結果 {r['actual_trifecta']}{payout_str}</p>"
-            )
-            if analysis_str:
-                parts.append(f"<p>{analysis_str}</p>")
 
-    # ── Hit races by venue ──
-    first_only_hits = [r for r in records if r["hit_1st"] and not r["hit_trifecta"]]
-    if first_only_hits or tri_hits:
-        parts.append("<h3>的中レース一覧</h3>")
-        all_hits = [r for r in records if r["hit_1st"] or r["hit_trifecta"]]
+            hit_items.append(
+                f"<li><strong>◎ {stadium} {r['race_number']}R</strong>"
+                f"　予測 {r['predicted_trifecta']} → 結果 {r['actual_trifecta']}"
+                f"{payout_str}</li>"
+            )
+            # Add analysis as separate paragraph after the list item
+            if analysis_str:
+                # Close current list, add analysis, reopen list
+                hit_items.append(f"</ul><p>　　↳ {analysis_str}</p><ul>")
+
+        parts.append(f"<ul>{''.join(hit_items)}</ul>")
+        parts.append("<hr>")
+
+    # ━━━━ 的中レース一覧（場別） ━━━━
+    all_hits = [r for r in records if r["hit_1st"] or r["hit_trifecta"]]
+    if all_hits:
+        parts.append("<h3>的中レース一覧（場別）</h3>")
         by_venue: dict[str, list] = defaultdict(list)
         for r in all_hits:
             venue = STADIUMS.get(r["stadium_number"], str(r["stadium_number"]))
             by_venue[venue].append(r)
 
+        venue_items: list[str] = []
         for venue, venue_records in sorted(by_venue.items()):
             race_parts = []
             for r in sorted(venue_records, key=lambda x: x["race_number"]):
-                marker = "3連単" if r["hit_trifecta"] else "1着"
-                race_parts.append(f"{r['race_number']}R({marker})")
-            parts.append(f"<p><strong>{venue}</strong>: {', '.join(race_parts)}</p>")
+                if r["hit_trifecta"]:
+                    race_parts.append(f"<strong>{r['race_number']}R(3連単)</strong>")
+                else:
+                    race_parts.append(f"{r['race_number']}R(1着)")
+            venue_items.append(f"<li><strong>{venue}</strong>　{' / '.join(race_parts)}</li>")
+        parts.append(f"<ul>{''.join(venue_items)}</ul>")
 
-    # ── Daily trends analysis ──
+    # ━━━━ 傾向分析 ━━━━
     if results_data:
         trends = _build_daily_trends(records, results_data)
         if trends:
+            parts.append("<hr>")
             parts.append(trends)
 
-    # ── Cumulative track record ──
+    # ━━━━ 累計実績 ━━━━
     track_record = _build_track_record(stats)
     if track_record:
+        parts.append("<hr>")
         parts.append(track_record)
 
-    # ── Tomorrow teaser ──
+    # ━━━━ 明日の予測 ━━━━
+    parts.append("<hr>")
     parts.append("<h3>明日の予測について</h3>")
     parts.append(
-        "<p>水理AIは毎朝7:30に全場の予測を無料公開中。"
-        "フォローすると翌朝すぐにAI予測をチェックできます。"
-        "予測→結果→検証を365日自動で回し続けるAI予想です。</p>"
+        "<p>水理AIは<strong>毎朝7:30</strong>に全場の予測を無料公開中。"
+        "フォローすると翌朝すぐにAI予測をチェックできます。</p>"
+    )
+    parts.append(
+        "<p>予測→結果→検証を<strong>365日自動</strong>で回し続けるAI予想です。</p>"
     )
 
-    # ── Upsell ──
+    # ━━━━ Sランク誘導 ━━━━
     parts.append("<h3>Sランク詳細予測を毎日受け取るには</h3>")
     parts.append(
-        "<p>全レースの1着予測は毎朝無料で公開しています。"
-        "さらにSランクレースの詳細な買い目・AI分析が必要な方は、"
-        "有料記事またはメンバーシップをご検討ください。</p>"
+        "<ul>"
+        "<li>全レースの1着予測 … <strong>毎朝無料</strong>で公開中</li>"
+        "<li>Sランクの詳細買い目・AI分析 … <strong>有料記事</strong>で配信</li>"
+        "<li>月額メンバーシップで読み放題</li>"
+        "</ul>"
     )
-
     parts.append(_membership_upsell())
 
     # Related articles

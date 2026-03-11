@@ -731,21 +731,40 @@ def get_accuracy_for_date(race_date: str) -> list[dict]:
     """Get accuracy records for a specific date.
 
     Returns list of dicts with keys: race_date, stadium_number, race_number,
-    predicted_1st, actual_1st, hit_1st, predicted_trifecta, actual_trifecta, hit_trifecta.
+    predicted_1st, actual_1st, hit_1st, predicted_trifecta, actual_trifecta,
+    hit_trifecta, trifecta_payout (per 100 yen, 0 if unknown).
     """
     conn = _get_connection()
     try:
         rows = conn.execute(
-            """SELECT race_date, stadium_number, race_number,
-                      predicted_1st, actual_1st, hit_1st,
-                      predicted_trifecta, actual_trifecta, hit_trifecta
-               FROM accuracy_log
-               WHERE race_date = ?
-               ORDER BY stadium_number, race_number""",
+            """SELECT a.race_date, a.stadium_number, a.race_number,
+                      a.predicted_1st, a.actual_1st, a.hit_1st,
+                      a.predicted_trifecta, a.actual_trifecta, a.hit_trifecta,
+                      r.payouts_json
+               FROM accuracy_log a
+               LEFT JOIN results r
+                 ON a.race_date = r.race_date
+                AND a.stadium_number = r.stadium_number
+                AND a.race_number = r.race_number
+               WHERE a.race_date = ?
+               ORDER BY a.stadium_number, a.race_number""",
             (race_date,),
         ).fetchall()
-        return [
-            {
+        import json as _json
+
+        result = []
+        for r in rows:
+            trifecta_payout = 0
+            if bool(r["hit_trifecta"]) and r["payouts_json"]:
+                try:
+                    payouts = _json.loads(r["payouts_json"])
+                    for p in payouts.get("trifecta", []):
+                        if p.get("combination") == r["actual_trifecta"]:
+                            trifecta_payout = p.get("payout", 0)
+                            break
+                except (ValueError, TypeError):
+                    pass
+            result.append({
                 "race_date": r["race_date"],
                 "stadium_number": r["stadium_number"],
                 "race_number": r["race_number"],
@@ -755,8 +774,8 @@ def get_accuracy_for_date(race_date: str) -> list[dict]:
                 "predicted_trifecta": r["predicted_trifecta"],
                 "actual_trifecta": r["actual_trifecta"],
                 "hit_trifecta": bool(r["hit_trifecta"]),
-            }
-            for r in rows
-        ]
+                "trifecta_payout": trifecta_payout,
+            })
+        return result
     finally:
         conn.close()

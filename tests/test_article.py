@@ -424,10 +424,10 @@ class TestHashtagsByArticleType:
         assert "競艇速報" in tags
         assert "午前結果" in tags
 
-    def test_max_8_tags(self) -> None:
+    def test_max_10_tags(self) -> None:
         race = _load_race()
         tags = _build_hashtags(race, venue_names=["桐生", "戸田", "江戸川"], article_type="prediction")
-        assert len(tags) <= 8
+        assert len(tags) <= 10
 
 
 # ── Related articles ──────────────────────────────────────────

@@ -24,8 +24,9 @@ ABOUT_SUIRI_AI = (
     "<h3>水理AIとは</h3>"
     "<p>ボートレース全場・全レースを毎朝自動分析するAI予測サービスです。"
     "LightGBMと独自の特徴量エンジニアリングにより、選手・モーター・コース・展示データを"
-    "総合的にスコアリング。推奨度ランク・的中率・ROIはすべてデータベースに記録し、"
-    "改ざんなく公開しています。</p>"
+    "総合的にスコアリング。毎日自動で予測→結果→検証のサイクルを回し、"
+    "的中率・ROIの全履歴を改ざんなく公開しています。"
+    "予測だけでなく「結果が正しかったか」まで毎日証明するAI予想です。</p>"
 )
 
 
@@ -82,10 +83,10 @@ def _build_track_record(stats: dict) -> str:
 
 
 _HASHTAGS_BY_TYPE: dict[str, list[str]] = {
-    "prediction": ["競艇予想", "ボートレース予想", "AI予測", "競艇", "無料予想", "水理AI"],
-    "results": ["競艇結果", "ボートレース結果", "的中", "AI予測", "回収率", "水理AI"],
-    "track_record": ["競艇実績", "AI予測", "回収率推移", "的中率", "水理AI"],
-    "midday": ["競艇速報", "午前結果", "ボートレース", "AI予測", "水理AI"],
+    "prediction": ["競艇予想", "ボートレース予想", "AI予測", "競艇AI", "競艇", "無料予想", "AI競艇予想", "水理AI"],
+    "results": ["競艇結果", "ボートレース結果", "的中", "AI予測", "競艇AI", "回収率", "AI競艇予想", "水理AI"],
+    "track_record": ["競艇実績", "AI予測", "競艇AI", "回収率推移", "的中率", "AI競艇予想", "水理AI"],
+    "midday": ["競艇速報", "午前結果", "ボートレース", "AI予測", "競艇AI", "AI競艇予想", "水理AI"],
 }
 
 
@@ -99,7 +100,7 @@ def _build_hashtags(
     if article_type and article_type in _HASHTAGS_BY_TYPE:
         tags = list(_HASHTAGS_BY_TYPE[article_type])
     else:
-        tags = ["競艇", "ボートレース", "ボートレース予想", "AI予測", "競艇予想", "水理AI"]
+        tags = ["競艇", "ボートレース", "ボートレース予想", "AI予測", "競艇AI", "競艇予想", "AI競艇予想", "水理AI"]
     if race:
         stadium = STADIUMS.get(race.race_stadium_number, "")
         if stadium and stadium not in tags:
@@ -108,7 +109,7 @@ def _build_hashtags(
         for name in venue_names:
             if name and name not in tags:
                 tags.append(name)
-    return tags[:8]
+    return tags[:10]
 
 
 def _build_html(
@@ -358,16 +359,22 @@ def _build_accuracy_html(
     # ── Highlight: trifecta hits ──
     tri_hits = [r for r in records if r["hit_trifecta"]]
     if tri_hits:
+        total_payout = sum(r.get("trifecta_payout", 0) for r in tri_hits)
+        payout_note = ""
+        if total_payout > 0:
+            payout_note = f" 合計払戻 <strong>¥{total_payout:,}</strong>（100円あたり）"
         parts.append("<h3>本日のハイライト — 3連単的中</h3>")
         parts.append(
             f"<p>本日は{len(tri_hits)}レースで3連単を的中。"
-            f"AIが着順まで正確に読み切ったレースです。</p>"
+            f"AIが着順まで正確に読み切ったレースです。{payout_note}</p>"
         )
         for r in tri_hits:
             stadium = STADIUMS.get(r["stadium_number"], str(r["stadium_number"]))
+            payout = r.get("trifecta_payout", 0)
+            payout_str = f" <strong>¥{payout:,}</strong>" if payout > 0 else ""
             parts.append(
                 f"<p><strong>{stadium} {r['race_number']}R — 3連単的中!</strong> "
-                f"予測 {r['predicted_trifecta']} → 結果 {r['actual_trifecta']}</p>"
+                f"予測 {r['predicted_trifecta']} → 結果 {r['actual_trifecta']}{payout_str}</p>"
             )
 
     # ── Hit races by venue ──
@@ -395,8 +402,9 @@ def _build_accuracy_html(
     # ── Tomorrow teaser ──
     parts.append("<h3>明日の予測について</h3>")
     parts.append(
-        "<p>水理AIは毎朝7:30に全レースの予測を配信しています。"
-        "フォローしておくと、明日の予測記事が公開されたときに通知が届きます。</p>"
+        "<p>水理AIは毎朝7:30に全場の予測を無料公開中。"
+        "フォローすると翌朝すぐにAI予測をチェックできます。"
+        "予測→結果→検証を365日自動で回し続けるAI予想です。</p>"
     )
 
     # ── Upsell ──
@@ -612,7 +620,8 @@ def generate_grade_summary_article(
             f"<p>本日は{venue_str}を含む全{num_venues}場{total_races}レースをAIが分析。"
             f"Sランク{s_count}レース、Aランク{a_count}レースを検出しました。"
         )
-    opener += f"全レースの1着予測を無料で公開しています。</p>"
+    opener += f"全レースの1着予測を無料で公開しています。"
+    opener += f"毎朝7:30に全場を自動分析 — 予測→結果→検証を365日繰り返すAI予想です。</p>"
     parts.append(opener)
 
     if stats and stats.get("total_races", 0) > 0:
@@ -784,7 +793,9 @@ def _membership_upsell() -> str:
         f"<p>Sランク詳細予測は通常¥{article_price:,}/記事。"
         f"メンバーシップなら毎朝のSランク記事がすべて読み放題で"
         f"<strong>月額¥{price:,}</strong>（1日約¥{daily}）。"
-        f"1記事分の料金で1ヶ月分の予測を受け取れます。"
+        f"1記事分の料金で1ヶ月分の予測を受け取れます。</p>"
+        f"<p>3連単的中時は1万円超の払戻も。"
+        f"毎朝の予測に加え、結果レポートで回収率まで毎日検証。"
         f"詳しくは水理AIのプロフィールから。</p>"
     )
 

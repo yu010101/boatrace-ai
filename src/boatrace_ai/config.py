@@ -42,6 +42,7 @@ HTTP_MAX_RETRIES: int = int(os.environ.get("BOATRACE_HTTP_MAX_RETRIES", "3"))
 NOTE_EMAIL: str = os.environ.get("NOTE_EMAIL", "")
 NOTE_PASSWORD: str = os.environ.get("NOTE_PASSWORD", "")
 NOTE_USER_ID: str = os.environ.get("NOTE_USER_ID", "")
+NOTE_URLNAME: str = os.environ.get("NOTE_URLNAME", "suiri_ai")
 NOTE_ARTICLE_PRICE: int = int(os.environ.get("NOTE_ARTICLE_PRICE", "300"))
 NOTE_MEMBERSHIP_PRICE: int = int(os.environ.get("NOTE_MEMBERSHIP_PRICE", "1000"))
 

@@ -517,13 +517,15 @@ class NoteClient:
                     user = data_inner.get("user", {})
                     urlname = user.get("urlname", "")
                     key = data_inner.get("key", draft_key)
-                    if urlname:
-                        result["note_url"] = f"{NOTE_BASE_URL}/{urlname}/n/{key}"
-                    else:
-                        result["note_url"] = f"{NOTE_BASE_URL}/n/{key}"
+                    if not urlname:
+                        from boatrace_ai import config
+                        urlname = config.NOTE_URLNAME
+                    result["note_url"] = f"{NOTE_BASE_URL}/{urlname}/n/{key}"
 
             if "note_url" not in result:
-                result["note_url"] = f"{NOTE_BASE_URL}/n/{draft_key}"
+                from boatrace_ai import config
+                fallback_name = config.NOTE_URLNAME
+                result["note_url"] = f"{NOTE_BASE_URL}/{fallback_name}/n/{draft_key}"
 
             log.info("Publish complete. note_url=%s", result.get("note_url"))
 

@@ -591,7 +591,15 @@ def get_latest_article(article_type: str) -> dict | None:
                LIMIT 1""",
             (article_type,),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        # Fix legacy URLs missing urlname (e.g. note.com/n/xxx -> note.com/suiri_ai/n/xxx)
+        url = result.get("note_url", "")
+        if url and "note.com/n/" in url and "note.com/suiri_ai/" not in url:
+            from boatrace_ai import config
+            result["note_url"] = url.replace("note.com/n/", f"note.com/{config.NOTE_URLNAME}/n/")
+        return result
     finally:
         conn.close()
 

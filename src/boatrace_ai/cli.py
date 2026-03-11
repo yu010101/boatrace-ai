@@ -37,6 +37,7 @@ from boatrace_ai.display.formatter import (
 from boatrace_ai.prediction.engine import predict_race, predict_race_auto
 from boatrace_ai.publish.article import (
     _build_accuracy_markdown,
+    _build_hit_analysis,
     _build_markdown,
     generate_accuracy_report,
     generate_article,
@@ -53,7 +54,9 @@ from boatrace_ai.storage.database import (
     get_accuracy_trend,
     get_grades_for_date,
     get_latest_article,
+    get_prediction_for_race,
     get_predictions_for_date,
+    get_results_for_date,
     get_roi_daily,
     get_roi_stats,
     get_roi_trend,
@@ -67,6 +70,8 @@ from boatrace_ai.storage.database import (
     save_virtual_bets,
 )
 from boatrace_ai.tracking.roi import check_virtual_bets
+
+log = logging.getLogger(__name__)
 
 VALID_STADIUMS = click.IntRange(1, 24)
 VALID_RACES = click.IntRange(1, 12)
@@ -987,14 +992,36 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
     stats = get_stats()
     roi_stats = get_roi_daily(target_str)
 
-    # Step 5: Generate report (with ROI + related links)
+    # Step 4.5: Get results data (used for hit analysis + daily trends)
+    results_data = get_results_for_date(target_str)
+
+    # Step 4.6: Build hit analyses for trifecta hits
+    hit_analyses: dict[tuple[int, int], str] = {}
+    tri_hits = [r for r in records if r["hit_trifecta"]]
+    top_hits = sorted(tri_hits, key=lambda x: x.get("trifecta_payout", 0), reverse=True)[:3]
+    for r in top_hits:
+        pred = get_prediction_for_race(target_str, r["stadium_number"], r["race_number"])
+        res_data = None
+        for rd in results_data:
+            if rd["stadium_number"] == r["stadium_number"] and rd["race_number"] == r["race_number"]:
+                res_data = rd
+                break
+        analysis_text = _build_hit_analysis(r, pred, res_data)
+        if analysis_text:
+            hit_analyses[(r["stadium_number"], r["race_number"])] = analysis_text
+
+    # Step 5: Generate report (with ROI + related links + new data)
     related_links = _get_related_links("grades", "track_record", "midday")
-    title, html_body, hashtags = generate_accuracy_report(
-        target_str, records, stats, roi_stats=roi_stats,
-        related_links=related_links,
-    )
+
+    # Step 5.5: Generate stats chart (only for publishing, not dry-run)
+    chart_url = None
 
     if dry_run:
+        title, html_body, hashtags = generate_accuracy_report(
+            target_str, records, stats, roi_stats=roi_stats,
+            related_links=related_links,
+            hit_analyses=hit_analyses, results_data=results_data,
+        )
         md_text = _build_accuracy_markdown(target_str, records, stats, roi_stats=roi_stats)
         display_accuracy_preview(title, md_text)
         return
@@ -1004,6 +1031,25 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
         note_client = NoteClient()
         with console.status("[bold green]note.com にログイン確認中..."):
             await note_client.ensure_logged_in()
+
+        # Generate chart image for publishing
+        try:
+            from boatrace_ai.publish.eyecatch import generate_stats_chart
+
+            accuracy_trend = get_accuracy_trend(30)
+            roi_trend = get_roi_trend(30)
+            chart_path = await generate_stats_chart(accuracy_trend, roi_trend)
+            if chart_path:
+                chart_url = await note_client.upload_image(chart_path)
+        except Exception as e:
+            log.warning("グラフ画像の生成/アップロードに失敗（記事投稿は継続）: %s", e)
+
+        title, html_body, hashtags = generate_accuracy_report(
+            target_str, records, stats, roi_stats=roi_stats,
+            related_links=related_links,
+            chart_url=chart_url, hit_analyses=hit_analyses, results_data=results_data,
+        )
+
         with console.status("[bold green]的中レポートを投稿中..."):
             result = await note_client.create_and_publish(
                 title, html_body, price=0, hashtags=hashtags,

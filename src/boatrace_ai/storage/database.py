@@ -727,6 +727,67 @@ def get_engagement_log(race_date: str) -> list[dict]:
         conn.close()
 
 
+def get_prediction_for_race(
+    race_date: str, stadium_number: int, race_number: int,
+) -> dict | None:
+    """Get prediction + result data for a single race (for hit analysis)."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            """SELECT p.predicted_order, p.confidence, p.analysis,
+                      r.technique_number, r.wind, r.wave
+               FROM predictions p
+               LEFT JOIN results r
+                 ON p.race_date = r.race_date
+                AND p.stadium_number = r.stadium_number
+                AND p.race_number = r.race_number
+               WHERE p.race_date = ? AND p.stadium_number = ? AND p.race_number = ?""",
+            (race_date, stadium_number, race_number),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "predicted_order": json.loads(row["predicted_order"]) if row["predicted_order"] else [],
+            "confidence": row["confidence"],
+            "analysis": row["analysis"] or "",
+            "technique_number": row["technique_number"],
+            "wind": row["wind"],
+            "wave": row["wave"],
+        }
+    finally:
+        conn.close()
+
+
+def get_results_for_date(race_date: str) -> list[dict]:
+    """Get all results for a date (technique, conditions, actual order)."""
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT race_date, stadium_number, race_number,
+                      actual_order, technique_number, wind, wave
+               FROM results
+               WHERE race_date = ? AND actual_order IS NOT NULL
+               ORDER BY stadium_number, race_number""",
+            (race_date,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            actual = json.loads(r["actual_order"]) if r["actual_order"] else []
+            result.append({
+                "race_date": r["race_date"],
+                "stadium_number": r["stadium_number"],
+                "race_number": r["race_number"],
+                "actual_order": actual,
+                "actual_1st": actual[0] if actual else None,
+                "technique_number": r["technique_number"],
+                "wind": r["wind"],
+                "wave": r["wave"],
+            })
+        return result
+    finally:
+        conn.close()
+
+
 def get_accuracy_for_date(race_date: str) -> list[dict]:
     """Get accuracy records for a specific date.
 

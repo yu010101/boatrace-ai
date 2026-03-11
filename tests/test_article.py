@@ -11,7 +11,9 @@ from boatrace_ai.publish.article import (
     MEMBERSHIP_UPSELL,
     _build_accuracy_html,
     _build_accuracy_markdown,
+    _build_daily_trends,
     _build_hashtags,
+    _build_hit_analysis,
     _build_html,
     _build_markdown,
     _build_related_articles,
@@ -587,3 +589,164 @@ class TestAccuracyReportMembershipUpsell:
     def test_accuracy_html_includes_membership(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "メンバーシップ" in html
+
+
+# ── Hit analysis (施策1) ─────────────────────────────────────
+
+
+class TestBuildHitAnalysis:
+    def test_with_prediction_and_result(self) -> None:
+        record = {
+            "stadium_number": 1, "race_number": 1,
+            "hit_trifecta": True, "trifecta_payout": 15000,
+            "predicted_trifecta": "1-3-2", "actual_trifecta": "1-3-2",
+        }
+        prediction = {
+            "confidence": 0.72,
+            "analysis": "1号艇がインから逃げ切り。モーター性能が良好。",
+            "predicted_order": [1, 3, 2],
+            "technique_number": None, "wind": None, "wave": None,
+        }
+        result = {"technique_number": 1, "wind": 3, "wave": 2}
+        text = _build_hit_analysis(record, prediction, result)
+        assert "72%" in text
+        assert "逃げ" in text
+        assert "万舟" in text
+
+    def test_no_prediction(self) -> None:
+        record = {"hit_trifecta": True, "trifecta_payout": 500}
+        text = _build_hit_analysis(record, None, None)
+        assert "¥500" in text
+
+    def test_empty_data(self) -> None:
+        record = {"hit_trifecta": True, "trifecta_payout": 0}
+        text = _build_hit_analysis(record, None, None)
+        assert text == ""
+
+    def test_analysis_in_highlight(self) -> None:
+        """Hit analyses are embedded in accuracy HTML highlight section."""
+        records = _make_accuracy_records()
+        # Add payout to make it a valid trifecta hit
+        records[0]["trifecta_payout"] = 5000
+        analyses = {(1, 1): "（AIの信頼度は72%。決まり手は「逃げ」）"}
+        html = _build_accuracy_html(
+            "2026-03-01", records, _make_stats(),
+            hit_analyses=analyses,
+        )
+        assert "AIの信頼度は72%" in html
+
+
+# ── Daily trends (施策3) ─────────────────────────────────────
+
+
+class TestBuildDailyTrends:
+    def _make_results_data(self) -> list[dict]:
+        return [
+            {"stadium_number": 1, "race_number": i, "actual_order": [1, 3, 2, 4, 5, 6],
+             "actual_1st": 1, "technique_number": 1, "wind": 3, "wave": 2}
+            for i in range(1, 7)
+        ] + [
+            {"stadium_number": 6, "race_number": i, "actual_order": [3, 1, 2, 4, 5, 6],
+             "actual_1st": 3, "technique_number": 3, "wind": 5, "wave": 3}
+            for i in range(1, 5)
+        ]
+
+    def test_contains_technique_distribution(self) -> None:
+        trends = _build_daily_trends(_make_accuracy_records(), self._make_results_data())
+        assert "決まり手分布" in trends
+        assert "逃げ" in trends
+
+    def test_contains_inner_course_rate(self) -> None:
+        trends = _build_daily_trends(_make_accuracy_records(), self._make_results_data())
+        assert "1号艇1着率" in trends
+
+    def test_empty_results(self) -> None:
+        trends = _build_daily_trends(_make_accuracy_records(), [])
+        assert trends == ""
+
+    def test_trends_in_accuracy_html(self) -> None:
+        """Daily trends appear in accuracy HTML when results_data is provided."""
+        results_data = self._make_results_data()
+        html = _build_accuracy_html(
+            "2026-03-01", _make_accuracy_records(), _make_stats(),
+            results_data=results_data,
+        )
+        assert "本日の傾向分析" in html
+        assert "決まり手分布" in html
+
+
+# ── Chart URL in accuracy HTML (施策2) ───────────────────────
+
+
+class TestChartInAccuracyHtml:
+    def test_chart_image_embedded(self) -> None:
+        html = _build_accuracy_html(
+            "2026-03-01", _make_accuracy_records(), _make_stats(),
+            chart_url="https://assets.note.com/chart123.png",
+        )
+        assert '<img src="https://assets.note.com/chart123.png"' in html
+
+    def test_no_chart_no_img(self) -> None:
+        html = _build_accuracy_html(
+            "2026-03-01", _make_accuracy_records(), _make_stats(),
+        )
+        assert "<img" not in html
+
+
+# ── Title variation (施策4) ──────────────────────────────────
+
+
+class TestTitleVariation:
+    def _make_records_with_payouts(self, payout: int, hit_count: int = 1) -> list[dict]:
+        records = []
+        for i in range(hit_count):
+            records.append({
+                "race_date": "2026-03-01", "stadium_number": 1, "race_number": i + 1,
+                "predicted_1st": 1, "actual_1st": 1, "hit_1st": True,
+                "predicted_trifecta": "1-3-2", "actual_trifecta": "1-3-2",
+                "hit_trifecta": True, "trifecta_payout": payout,
+            })
+        # Add some non-hits
+        for i in range(3):
+            records.append({
+                "race_date": "2026-03-01", "stadium_number": 6, "race_number": i + 1,
+                "predicted_1st": 1, "actual_1st": 4, "hit_1st": False,
+                "predicted_trifecta": "1-3-2", "actual_trifecta": "4-1-5",
+                "hit_trifecta": False, "trifecta_payout": 0,
+            })
+        return records
+
+    def test_manshuu_title(self) -> None:
+        """High payout (>=10000) triggers 万舟 title."""
+        records = self._make_records_with_payouts(15000)
+        title, _, _ = generate_accuracy_report("2026-03-01", records, _make_stats())
+        assert "万舟" in title
+
+    def test_many_trifecta_hits_title(self) -> None:
+        """5+ trifecta hits triggers count-based title."""
+        records = self._make_records_with_payouts(500, hit_count=6)
+        title, _, _ = generate_accuracy_report("2026-03-01", records, _make_stats())
+        assert "6本的中" in title
+
+    def test_high_hit_rate_title(self) -> None:
+        """>=50% hit rate triggers hit-rate title."""
+        records = [
+            {"race_date": "2026-03-01", "stadium_number": 1, "race_number": i,
+             "predicted_1st": 1, "actual_1st": 1, "hit_1st": True,
+             "predicted_trifecta": "1-3-2", "actual_trifecta": "4-1-5",
+             "hit_trifecta": False, "trifecta_payout": 0}
+            for i in range(1, 4)
+        ] + [
+            {"race_date": "2026-03-01", "stadium_number": 6, "race_number": 1,
+             "predicted_1st": 1, "actual_1st": 4, "hit_1st": False,
+             "predicted_trifecta": "1-3-2", "actual_trifecta": "4-1-5",
+             "hit_trifecta": False, "trifecta_payout": 0}
+        ]
+        title, _, _ = generate_accuracy_report("2026-03-01", records, _make_stats())
+        assert "75%" in title
+
+    def test_default_title(self) -> None:
+        """Low results use default title format."""
+        title, _, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
+        assert "競艇AI予想 結果" in title
+        assert "的中率" in title

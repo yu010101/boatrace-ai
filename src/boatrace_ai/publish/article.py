@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from boatrace_ai import config
-from boatrace_ai.data.constants import RACER_CLASSES, STADIUMS
+from boatrace_ai.data.constants import RACER_CLASSES, STADIUMS, TECHNIQUES
 from boatrace_ai.data.models import PredictionResult, RaceProgram
 
 AccuracyRecord = dict  # type alias for readability
@@ -311,12 +311,121 @@ def generate_article(
 # ── Accuracy report ──────────────────────────────────────────
 
 
+def _build_hit_analysis(
+    record: AccuracyRecord,
+    prediction: dict | None,
+    result: dict | None,
+) -> str:
+    """Build 2-4 sentence analysis of why a trifecta hit occurred."""
+    sentences: list[str] = []
+
+    # Confidence
+    if prediction and prediction.get("confidence"):
+        conf_pct = round(prediction["confidence"] * 100)
+        sentences.append(f"AIの信頼度は{conf_pct}%")
+
+    # Technique (決まり手)
+    tech_num = result.get("technique_number") if result else None
+    if tech_num and tech_num in TECHNIQUES:
+        sentences.append(f"決まり手は「{TECHNIQUES[tech_num]}」")
+
+    # Analysis excerpt (first sentence from prediction analysis)
+    if prediction and prediction.get("analysis"):
+        analysis = prediction["analysis"]
+        # Take first sentence (up to 。or 60 chars)
+        first = analysis.split("。")[0]
+        if len(first) > 60:
+            first = first[:57] + "..."
+        if first:
+            sentences.append(first)
+
+    # Payout
+    payout = record.get("trifecta_payout", 0)
+    if payout >= 10000:
+        sentences.append(f"払戻¥{payout:,}の万舟")
+    elif payout > 0:
+        sentences.append(f"払戻¥{payout:,}")
+
+    if not sentences:
+        return ""
+    return "（" + "。".join(sentences) + "）"
+
+
+def _build_daily_trends(
+    records: list[AccuracyRecord],
+    results_data: list[dict],
+) -> str:
+    """Build daily trends section: venue analysis, technique distribution, inner course rate."""
+    if not results_data:
+        return ""
+
+    parts: list[str] = []
+    parts.append("<h3>本日の傾向分析</h3>")
+
+    # ── Technique distribution ──
+    tech_counts: dict[str, int] = defaultdict(int)
+    for r in results_data:
+        tech = r.get("technique_number")
+        if tech and tech in TECHNIQUES:
+            tech_counts[TECHNIQUES[tech]] += 1
+    if tech_counts:
+        total_with_tech = sum(tech_counts.values())
+        tech_parts = []
+        for name, count in sorted(tech_counts.items(), key=lambda x: -x[1]):
+            pct = round(count / total_with_tech * 100)
+            tech_parts.append(f"{name}{count}本({pct}%)")
+        parts.append(
+            f"<p><strong>決まり手分布:</strong> {', '.join(tech_parts)}</p>"
+        )
+
+    # ── Inner course (1号艇) win rate ──
+    inner_wins = sum(1 for r in results_data if r.get("actual_1st") == 1)
+    total_races = len(results_data)
+    if total_races > 0:
+        inner_pct = round(inner_wins / total_races * 100)
+        avg_label = "平均並み" if 45 <= inner_pct <= 55 else (
+            "高め（堅い日）" if inner_pct > 55 else "低め（荒れた日）"
+        )
+        parts.append(
+            f"<p><strong>1号艇1着率:</strong> {inner_pct}%（{inner_wins}/{total_races}）— {avg_label}</p>"
+        )
+
+    # ── Best/worst venue ──
+    venue_stats: dict[str, dict] = defaultdict(lambda: {"total": 0, "hit": 0})
+    for r in records:
+        venue = STADIUMS.get(r["stadium_number"], str(r["stadium_number"]))
+        venue_stats[venue]["total"] += 1
+        if r["hit_1st"]:
+            venue_stats[venue]["hit"] += 1
+
+    if len(venue_stats) >= 3:
+        ranked = sorted(
+            venue_stats.items(),
+            key=lambda x: x[1]["hit"] / x[1]["total"] if x[1]["total"] > 0 else 0,
+            reverse=True,
+        )
+        best = ranked[0]
+        worst = ranked[-1]
+        best_pct = round(best[1]["hit"] / best[1]["total"] * 100) if best[1]["total"] else 0
+        worst_pct = round(worst[1]["hit"] / worst[1]["total"] * 100) if worst[1]["total"] else 0
+        parts.append(
+            f"<p><strong>場別的中率:</strong> "
+            f"最高 {best[0]} {best_pct}%（{best[1]['hit']}/{best[1]['total']}）/ "
+            f"最低 {worst[0]} {worst_pct}%（{worst[1]['hit']}/{worst[1]['total']}）</p>"
+        )
+
+    return "\n".join(parts) if len(parts) > 1 else ""
+
+
 def _build_accuracy_html(
     race_date: str,
     records: list[AccuracyRecord],
     stats: dict,
     roi_stats: dict | None = None,
     related_links: dict[str, dict] | None = None,
+    chart_url: str | None = None,
+    hit_analyses: dict[tuple[int, int], str] | None = None,
+    results_data: list[dict] | None = None,
 ) -> str:
     """Build note.com-compatible HTML for accuracy report."""
     total = len(records)
@@ -356,6 +465,10 @@ def _build_accuracy_html(
             f" / 損益 ¥{profit:+,} {profit_label}）</p>"
         )
 
+    # ── Chart image (30-day trend) ──
+    if chart_url:
+        parts.append(f'<p><img src="{chart_url}" alt="直近30日の的中率・ROI推移"></p>')
+
     # ── Highlight: trifecta hits ──
     tri_hits = [r for r in records if r["hit_trifecta"]]
     if tri_hits:
@@ -368,14 +481,23 @@ def _build_accuracy_html(
             f"<p>本日は{len(tri_hits)}レースで3連単を的中。"
             f"AIが着順まで正確に読み切ったレースです。{payout_note}</p>"
         )
-        for r in tri_hits:
+        # Deep analysis for top 3 hits (by payout desc)
+        sorted_hits = sorted(tri_hits, key=lambda x: x.get("trifecta_payout", 0), reverse=True)
+        for r in sorted_hits:
             stadium = STADIUMS.get(r["stadium_number"], str(r["stadium_number"]))
             payout = r.get("trifecta_payout", 0)
             payout_str = f" <strong>¥{payout:,}</strong>" if payout > 0 else ""
+            # Add hit analysis if available
+            analysis_str = ""
+            if hit_analyses:
+                key = (r["stadium_number"], r["race_number"])
+                analysis_str = hit_analyses.get(key, "")
             parts.append(
                 f"<p><strong>{stadium} {r['race_number']}R — 3連単的中!</strong> "
                 f"予測 {r['predicted_trifecta']} → 結果 {r['actual_trifecta']}{payout_str}</p>"
             )
+            if analysis_str:
+                parts.append(f"<p>{analysis_str}</p>")
 
     # ── Hit races by venue ──
     first_only_hits = [r for r in records if r["hit_1st"] and not r["hit_trifecta"]]
@@ -393,6 +515,12 @@ def _build_accuracy_html(
                 marker = "3連単" if r["hit_trifecta"] else "1着"
                 race_parts.append(f"{r['race_number']}R({marker})")
             parts.append(f"<p><strong>{venue}</strong>: {', '.join(race_parts)}</p>")
+
+    # ── Daily trends analysis ──
+    if results_data:
+        trends = _build_daily_trends(records, results_data)
+        if trends:
+            parts.append(trends)
 
     # ── Cumulative track record ──
     track_record = _build_track_record(stats)
@@ -522,6 +650,9 @@ def generate_accuracy_report(
     stats: dict,
     roi_stats: dict | None = None,
     related_links: dict[str, dict] | None = None,
+    chart_url: str | None = None,
+    hit_analyses: dict[tuple[int, int], str] | None = None,
+    results_data: list[dict] | None = None,
 ) -> tuple[str, str, list[str]]:
     """Generate a note.com accuracy report article.
 
@@ -531,12 +662,16 @@ def generate_accuracy_report(
         stats: Cumulative stats from get_stats()
         roi_stats: Optional ROI stats for the date
         related_links: Optional related article links for cross-linking
+        chart_url: Optional URL of uploaded stats chart image
+        hit_analyses: Optional dict mapping (stadium, race) -> analysis text
+        results_data: Optional list of result dicts for daily trend analysis
 
     Returns:
         Tuple of (title, html_body, hashtags)
     """
     total = len(records)
     hit_1st = sum(1 for r in records if r["hit_1st"])
+    hit_tri = sum(1 for r in records if r["hit_trifecta"])
     hit_1st_pct = round(hit_1st / total * 100) if total else 0
 
     venue_names = _venue_names_from_records(records)
@@ -544,12 +679,35 @@ def generate_accuracy_report(
     num_venues = len(venue_names)
     date_short = _format_date_short(race_date)
 
-    title = (
-        f"競艇AI予想 結果｜{venue_str}全{num_venues}場"
-        f"【的中率{hit_1st_pct}%】{date_short}"
+    # ── Dynamic title based on results ──
+    max_payout = max(
+        (r.get("trifecta_payout", 0) for r in records if r["hit_trifecta"]),
+        default=0,
     )
+    if max_payout >= 10000:
+        title = (
+            f"万舟的中！競艇AI予想 結果｜{venue_str}全{num_venues}場"
+            f"【3連単{hit_tri}本】{date_short}"
+        )
+    elif hit_tri >= 5:
+        title = (
+            f"3連単{hit_tri}本的中！競艇AI予想 結果｜{venue_str}全{num_venues}場"
+            f" {date_short}"
+        )
+    elif hit_1st_pct >= 50:
+        title = (
+            f"的中率{hit_1st_pct}%！競艇AI予想 結果｜{venue_str}全{num_venues}場"
+            f" {date_short}"
+        )
+    else:
+        title = (
+            f"競艇AI予想 結果｜{venue_str}全{num_venues}場"
+            f"【的中率{hit_1st_pct}%】{date_short}"
+        )
+
     html_body = _build_accuracy_html(
-        race_date, records, stats, roi_stats=roi_stats, related_links=related_links
+        race_date, records, stats, roi_stats=roi_stats, related_links=related_links,
+        chart_url=chart_url, hit_analyses=hit_analyses, results_data=results_data,
     )
 
     hashtags = _build_hashtags(venue_names=venue_names[:3], article_type="results")

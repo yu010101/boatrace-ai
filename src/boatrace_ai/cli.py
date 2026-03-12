@@ -1679,5 +1679,135 @@ def backtest_cmd(days: int, min_ev: float, kelly: float) -> None:
         console.print("\n  [bold yellow]Go/No-go: CAUTION — ROI < 100%、パラメータ調整を検討してください[/bold yellow]")
 
 
+@cli.command("optimize-ev")
+def optimize_ev_cmd() -> None:
+    """EVデータを分析し、最適なEV閾値・グレード・賭け種別を提案する。"""
+    from boatrace_ai.storage.database import _get_connection
+
+    conn = _get_connection()
+    try:
+        # Check data availability
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM virtual_bets WHERE is_hit IS NOT NULL AND ev IS NOT NULL"
+        ).fetchone()
+        total_judged_with_ev = row["cnt"]
+
+        if total_judged_with_ev < 50:
+            console.print(
+                f"\n[bold yellow]EV付き判定済みデータが{total_judged_with_ev}件しかありません。[/bold yellow]"
+            )
+            console.print("最低50件（理想は200件以上）必要です。")
+            # Show how many unjudged EV bets exist
+            row2 = conn.execute(
+                "SELECT COUNT(*) as cnt FROM virtual_bets WHERE is_hit IS NULL AND ev IS NOT NULL"
+            ).fetchone()
+            console.print(f"未判定のEV付きベット: {row2['cnt']}件（結果待ち）")
+            row3 = conn.execute(
+                "SELECT COUNT(*) as cnt FROM virtual_bets WHERE ev IS NOT NULL"
+            ).fetchone()
+            console.print(f"EV付き総ベット数: {row3['cnt']}件")
+            console.print("\n1〜2週間データを貯めてから再実行してください。")
+            return
+
+        console.print(f"\n[bold]EV最適化分析（{total_judged_with_ev}件のデータ）[/bold]\n")
+
+        # Analyze ROI by EV threshold
+        console.print("[bold]━━ EV閾値別ROI ━━[/bold]")
+        thresholds = [0.1, 0.2, 0.3, 0.5, 0.8, 1.0, 1.5]
+        for th in thresholds:
+            row = conn.execute(
+                """SELECT COUNT(*) as bets,
+                    SUM(CASE WHEN is_hit=1 THEN 1 ELSE 0 END) as hits,
+                    SUM(bet_amount) as invested, SUM(payout) as payout
+                 FROM virtual_bets
+                 WHERE is_hit IS NOT NULL AND ev IS NOT NULL AND ev >= ?""",
+                (th,),
+            ).fetchone()
+            if row["bets"] > 0 and row["invested"] > 0:
+                roi = round(100 * row["payout"] / row["invested"], 1)
+                hit_rate = round(100 * row["hits"] / row["bets"], 1)
+                color = "green" if roi >= 100 else "red"
+                console.print(
+                    f"  EV>={th:.1f}: {row['bets']:>4}本 | 的中{hit_rate:>5.1f}% | "
+                    f"ROI [{color}]{roi:>6.1f}%[/{color}] | "
+                    f"損益 ¥{row['payout'] - row['invested']:>+,}"
+                )
+
+        # Analyze by grade
+        console.print("\n[bold]━━ グレード別ROI ━━[/bold]")
+        rows = conn.execute(
+            """SELECT grade, COUNT(*) as bets,
+                SUM(CASE WHEN is_hit=1 THEN 1 ELSE 0 END) as hits,
+                SUM(bet_amount) as invested, SUM(payout) as payout
+             FROM virtual_bets
+             WHERE is_hit IS NOT NULL AND ev IS NOT NULL
+             GROUP BY grade ORDER BY grade"""
+        ).fetchall()
+        for r in rows:
+            if r["invested"] > 0:
+                roi = round(100 * r["payout"] / r["invested"], 1)
+                color = "green" if roi >= 100 else "red"
+                console.print(
+                    f"  {r['grade']}: {r['bets']:>4}本 | "
+                    f"ROI [{color}]{roi:>6.1f}%[/{color}]"
+                )
+
+        # Analyze by bet type
+        console.print("\n[bold]━━ 賭け種別ROI ━━[/bold]")
+        rows = conn.execute(
+            """SELECT bet_type, COUNT(*) as bets,
+                SUM(CASE WHEN is_hit=1 THEN 1 ELSE 0 END) as hits,
+                SUM(bet_amount) as invested, SUM(payout) as payout
+             FROM virtual_bets
+             WHERE is_hit IS NOT NULL AND ev IS NOT NULL
+             GROUP BY bet_type ORDER BY bet_type"""
+        ).fetchall()
+        for r in rows:
+            if r["invested"] > 0:
+                roi = round(100 * r["payout"] / r["invested"], 1)
+                color = "green" if roi >= 100 else "red"
+                console.print(
+                    f"  {r['bet_type']:>4}: {r['bets']:>4}本 | "
+                    f"ROI [{color}]{roi:>6.1f}%[/{color}]"
+                )
+
+        # Best combo: grade + bet_type + EV threshold
+        console.print("\n[bold]━━ 最適な組み合わせ（グレード×種別×EV） ━━[/bold]")
+        best_roi = 0
+        best_combo = ""
+        for grade in ["S", "A", "S,A"]:
+            grade_filter = "('S','A')" if grade == "S,A" else f"('{grade}')"
+            for bt in ["単勝", "2連単", "単勝+2連単"]:
+                bt_filter = "('単勝','2連単')" if bt == "単勝+2連単" else f"('{bt}')"
+                for th in [0.1, 0.2, 0.3, 0.5, 0.8]:
+                    row = conn.execute(
+                        f"""SELECT COUNT(*) as bets,
+                            SUM(bet_amount) as invested, SUM(payout) as payout
+                         FROM virtual_bets
+                         WHERE is_hit IS NOT NULL AND ev IS NOT NULL
+                           AND grade IN {grade_filter}
+                           AND bet_type IN {bt_filter}
+                           AND ev >= ?""",
+                        (th,),
+                    ).fetchone()
+                    if row["bets"] >= 10 and row["invested"] > 0:
+                        roi = round(100 * row["payout"] / row["invested"], 1)
+                        if roi > best_roi:
+                            best_roi = roi
+                            best_combo = f"Grade={grade} | Type={bt} | EV>={th}"
+
+        if best_combo:
+            color = "green" if best_roi >= 100 else "yellow"
+            console.print(f"\n  [bold {color}]最適: {best_combo} → ROI {best_roi}%[/bold {color}]")
+        else:
+            console.print("\n  [dim]十分なデータがある組み合わせが見つかりません[/dim]")
+
+        console.print(
+            "\n[dim]※ 最適化後は config.py の EV_MIN, BET_GRADES を更新してください[/dim]"
+        )
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     cli()

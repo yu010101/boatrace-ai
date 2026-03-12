@@ -162,6 +162,43 @@ def _build_loss_analysis(
     return "\n".join(parts)
 
 
+def _build_tomorrow_preview(records: list[AccuracyRecord]) -> str:
+    """Build tomorrow preview based on today's hot venues (A4)."""
+    if not records:
+        return ""
+
+    venue_stats: dict[str, dict] = defaultdict(lambda: {"total": 0, "hit": 0})
+    for r in records:
+        venue = STADIUMS.get(r["stadium_number"], "")
+        if venue:
+            venue_stats[venue]["total"] += 1
+            if r["hit_1st"]:
+                venue_stats[venue]["hit"] += 1
+
+    # Only show if we have enough data
+    if len(venue_stats) < 2:
+        return ""
+
+    sorted_venues = sorted(
+        venue_stats.items(),
+        key=lambda x: x[1]["hit"] / max(x[1]["total"], 1),
+        reverse=True,
+    )[:3]
+
+    # Only show if top venue has at least 1 hit
+    if sorted_venues[0][1]["hit"] == 0:
+        return ""
+
+    parts = ["<h3>◆ 明日の注目</h3>"]
+    parts.append("<p>本日の成績から、明日も注目したい場をピックアップ。</p>")
+    items = []
+    for venue, st in sorted_venues:
+        rate = round(st["hit"] / max(st["total"], 1) * 100)
+        items.append(f"<li>{venue} … 本日{rate}%的中、好調継続に期待</li>")
+    parts.append(f"<ul>{''.join(items)}</ul>")
+    return "\n".join(parts)
+
+
 def _venue_names_from_grades(grades: list[dict]) -> list[str]:
     """Extract unique venue names from grade dicts."""
     names = []
@@ -227,12 +264,17 @@ def _build_hashtags(
     *,
     venue_names: list[str] | None = None,
     article_type: str | None = None,
+    dynamic_tags: list[str] | None = None,
 ) -> list[str]:
     """Generate hashtags for the article."""
     if article_type and article_type in _HASHTAGS_BY_TYPE:
         tags = list(_HASHTAGS_BY_TYPE[article_type])
     else:
         tags = ["競艇", "ボートレース", "ボートレース予想", "AI予測", "競艇AI", "競艇予想", "AI競艇予想", "水理AI"]
+    if dynamic_tags:
+        for dt in dynamic_tags:
+            if dt and dt not in tags:
+                tags.append(dt)
     if race:
         stadium = STADIUMS.get(race.race_stadium_number, "")
         if stadium and stadium not in tags:
@@ -443,6 +485,18 @@ def generate_article(
 # ── Accuracy report ──────────────────────────────────────────
 
 
+_RACE_DRAMA: dict[str, str] = {
+    "逃げ": "{boat}号艇がスタートから主導権を握り、そのまま逃げ切り。",
+    "差し": "{boat}号艇が内を巧みに突いて差し切る好レース。",
+    "まくり": "{boat}号艇が豪快にまくり、外から一気に先頭へ。",
+    "まくり差し": "{boat}号艇がまくり差しで鮮やかに抜け出す展開。",
+    "抜き": "{boat}号艇が2周目以降に抜き去る逆転劇。",
+    "恵まれ": "先行艇の転覆で{boat}号艇が恵まれて1着。波乱の結末。",
+}
+
+GRADE_MARKERS: dict[str, str] = {"S": "◎", "A": "○", "B": "△", "C": "✕"}
+
+
 def _build_hit_analysis(
     record: AccuracyRecord,
     prediction: dict | None,
@@ -456,10 +510,16 @@ def _build_hit_analysis(
         conf_pct = round(prediction["confidence"] * 100)
         sentences.append(f"AIの信頼度は{conf_pct}%")
 
-    # Technique (決まり手)
+    # Technique (決まり手) + A2: Race drama narrative
     tech_num = result.get("technique_number") if result else None
     if tech_num and tech_num in TECHNIQUES:
-        sentences.append(f"決まり手は「{TECHNIQUES[tech_num]}」")
+        tech_name = TECHNIQUES[tech_num]
+        drama = _RACE_DRAMA.get(tech_name, "")
+        first_place = result.get("first_place", "?") if result else "?"
+        if drama:
+            sentences.append(drama.format(boat=first_place))
+        else:
+            sentences.append(f"決まり手は「{tech_name}」")
 
     # Analysis excerpt (first sentence from prediction analysis)
     if prediction and prediction.get("analysis"):
@@ -743,6 +803,12 @@ def _build_accuracy_html(
         parts.append("<hr>")
         parts.append(track_record)
 
+    # ━━━━ A4: 明日の注目 ━━━━
+    tomorrow_preview = _build_tomorrow_preview(records)
+    if tomorrow_preview:
+        parts.append("<hr>")
+        parts.append(tomorrow_preview)
+
     # ━━━━ C2: 明日の予測CTA ━━━━
     parts.append("<hr>")
     parts.append("<h3>◆ 明日の予測について</h3>")
@@ -935,7 +1001,20 @@ def generate_accuracy_report(
         accuracy_trend=accuracy_trend, roi_trend=roi_trend,
     )
 
-    hashtags = _build_hashtags(venue_names=venue_names[:3], article_type="results")
+    # D3: Dynamic hashtags based on results
+    dyn_tags: list[str] = []
+    if max_payout >= 10000:
+        dyn_tags.append("万舟")
+    if hit_tri >= 5:
+        dyn_tags.append("3連単的中")
+    roi_pct = 0
+    if roi_stats and roi_stats.get("total_bets", 0) > 0:
+        roi_pct = round(roi_stats["roi"] * 100)
+    if roi_pct >= 100:
+        dyn_tags.append("回収率100超")
+    hashtags = _build_hashtags(
+        venue_names=venue_names[:3], article_type="results", dynamic_tags=dyn_tags,
+    )
 
     return title, html_body, hashtags
 
@@ -968,17 +1047,22 @@ def generate_grade_summary_article(
     num_venues = len(venue_names)
     date_short = _format_date_short(race_date)
 
-    # Build title: competitor-beating format with venue names and free marker
-    if stats and stats.get("total_races", 0) > 0:
+    # D1: Dynamic title with S-rank hook
+    if s_count >= 5:
+        title = (
+            f"Sランク{s_count}レース！競艇AI予想｜{venue_str}全{num_venues}場"
+            f"【1着予測無料】{date_short}"
+        )
+    elif stats and stats.get("total_races", 0) > 0:
         hit_1st_pct = round(stats["hit_1st_rate"] * 100)
         title = (
             f"競艇AI予想｜{venue_str}全{num_venues}場"
-            f"【全レース1着予測無料】的中率{hit_1st_pct}% {date_short}"
+            f" Sランク{s_count}レース【1着予測無料】的中率{hit_1st_pct}% {date_short}"
         )
     else:
         title = (
             f"競艇AI予想｜{venue_str}全{num_venues}場"
-            f"【全レース1着予測無料】{date_short}"
+            f" Sランク{s_count}レース【1着予測無料】{date_short}"
         )
 
     parts: list[str] = []
@@ -1076,11 +1160,12 @@ def generate_grade_summary_article(
         if not rank_grades:
             continue
 
+        marker = GRADE_MARKERS.get(rank, "")
         label = {
-            "S": f"推奨度Sランク（高確信）— {len(rank_grades)}レース",
-            "A": f"推奨度Aランク（有力）— {len(rank_grades)}レース",
-            "B": f"推奨度Bランク（予測可能）— {len(rank_grades)}レース",
-            "C": f"推奨度Cランク（見送り推奨）— {len(rank_grades)}レース",
+            "S": f"{marker} 推奨度Sランク（高確信）— {len(rank_grades)}レース",
+            "A": f"{marker} 推奨度Aランク（有力）— {len(rank_grades)}レース",
+            "B": f"{marker} 推奨度Bランク（予測可能）— {len(rank_grades)}レース",
+            "C": f"{marker} 推奨度Cランク（見送り推奨）— {len(rank_grades)}レース",
         }[rank]
         parts.append(f"<h3>{label}</h3>")
         parts.append(f"<p>{rank_descriptions[rank]}</p>")
@@ -1140,7 +1225,14 @@ def generate_grade_summary_article(
 
     html_body = "\n".join(parts)
 
-    hashtags = _build_hashtags(venue_names=venue_names[:3], article_type="prediction")
+    # D3: Dynamic hashtags for grades
+    grade_dyn_tags: list[str] = ["無料予想"]
+    if s_count >= 5:
+        grade_dyn_tags.append("Sランク多数")
+    hashtags = _build_hashtags(
+        venue_names=venue_names[:3], article_type="prediction",
+        dynamic_tags=grade_dyn_tags,
+    )
 
     return title, html_body, hashtags
 
@@ -1217,7 +1309,13 @@ def generate_track_record_article(
         total_payout = sum(r["payout"] for r in roi_trend)
         roi_pct = round(total_payout / total_invested * 100) if total_invested > 0 else 0
 
-    title = f"競艇AI実績｜直近30日の的中率・ROI推移【全データ公開】"
+    # D1: Dynamic title with performance hook
+    if hit_1st_pct >= 50:
+        title = f"的中率{hit_1st_pct}%！競艇AI実績｜直近30日の全データ公開"
+    elif total > 0:
+        title = f"競艇AI実績｜{total:,}レース分析の的中率・ROI推移【全データ公開】"
+    else:
+        title = "競艇AI実績｜直近30日の的中率・ROI推移【全データ公開】"
 
     parts: list[str] = []
 
@@ -1413,6 +1511,28 @@ def generate_membership_article(
     parts.append(
         f"<p><strong>月額¥{config.NOTE_MEMBERSHIP_PRICE:,}</strong>（1日約¥{round(config.NOTE_MEMBERSHIP_PRICE / 30)}）</p>"
     )
+
+    # C4: Performance-based membership appeal
+    if stats.get("total_races", 0) > 0:
+        parts.append("<h3>◆ 直近の実績</h3>")
+        perf_items: list[str] = []
+        if stats.get("hit_trifecta_count", 0) > 0:
+            perf_items.append(
+                f"<li>直近30日の3連単的中 … <strong>{stats['hit_trifecta_count']}本</strong></li>"
+            )
+        hit_1st_pct = round(stats["hit_1st_rate"] * 100) if stats.get("hit_1st_rate") else 0
+        if hit_1st_pct > 0:
+            perf_items.append(
+                f"<li>1着的中率 … <strong>{hit_1st_pct}%</strong></li>"
+            )
+        perf_items.append(
+            f"<li>分析レース数 … <strong>{stats['total_races']:,}レース</strong></li>"
+        )
+        if perf_items:
+            parts.append(f"<ul>{''.join(perf_items)}</ul>")
+        parts.append(
+            "<p>これらの全レース詳細予測をメンバーシップで毎日お届けします。</p>"
+        )
 
     # Track record
     track_record = _build_track_record(stats)

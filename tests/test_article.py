@@ -8,7 +8,9 @@ from pathlib import Path
 from boatrace_ai.data.models import PredictionResult, ProgramsResponse
 from boatrace_ai.publish.article import (
     DISCLAIMER,
+    GRADE_MARKERS,
     MEMBERSHIP_UPSELL,
+    _RACE_DRAMA,
     _build_about_section,
     _build_accuracy_html,
     _build_accuracy_markdown,
@@ -20,9 +22,11 @@ from boatrace_ai.publish.article import (
     _build_markdown,
     _build_opening_hook,
     _build_related_articles,
+    _build_tomorrow_preview,
     _build_trend_text,
     generate_accuracy_report,
     generate_article,
+    generate_grade_summary_article,
     generate_membership_article,
     generate_midday_report,
     generate_track_record_article,
@@ -898,3 +902,182 @@ class TestCTA:
         _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
         assert "フォロー" in html
         assert "365日" in html
+
+
+# ── v4: D1 Dynamic Titles ──────────────────────────────────
+
+
+def _make_grades(s_count: int = 3, a_count: int = 5) -> list[dict]:
+    grades = []
+    for i in range(s_count):
+        grades.append({
+            "stadium_number": 1,
+            "race_number": i + 1,
+            "grade": "S",
+            "top1_prob": 0.45,
+        })
+    for i in range(a_count):
+        grades.append({
+            "stadium_number": 6,
+            "race_number": i + 1,
+            "grade": "A",
+            "top1_prob": 0.35,
+        })
+    return grades
+
+
+class TestDynamicTitles:
+    def test_grades_title_s_count_high(self) -> None:
+        grades = _make_grades(s_count=6)
+        title, _, _ = generate_grade_summary_article("2026-03-12", grades)
+        assert "Sランク6レース" in title
+
+    def test_grades_title_s_count_normal(self) -> None:
+        grades = _make_grades(s_count=2)
+        title, _, _ = generate_grade_summary_article("2026-03-12", grades, stats=_make_stats())
+        assert "Sランク2レース" in title
+
+    def test_grades_title_no_stats(self) -> None:
+        grades = _make_grades(s_count=2)
+        title, _, _ = generate_grade_summary_article("2026-03-12", grades)
+        assert "Sランク2レース" in title
+
+    def test_track_record_title_dynamic(self) -> None:
+        acc_trend = [{"date": f"2026-03-{i:02d}", "total": 48, "hit_1st": 30,
+                      "hit_tri": 2, "hit_1st_rate": 0.63} for i in range(1, 8)]
+        roi_trend = [{"date": f"2026-03-{i:02d}", "invested": 10000,
+                      "payout": 9000, "roi": 0.9} for i in range(1, 8)]
+        stats = {**_make_stats(), "hit_1st_rate": 0.55}
+        title, _, _ = generate_track_record_article(acc_trend, roi_trend, stats)
+        assert "的中率55%" in title
+
+    def test_track_record_title_low_rate(self) -> None:
+        acc_trend = [{"date": f"2026-03-{i:02d}", "total": 48, "hit_1st": 10,
+                      "hit_tri": 2, "hit_1st_rate": 0.21} for i in range(1, 8)]
+        roi_trend = [{"date": f"2026-03-{i:02d}", "invested": 10000,
+                      "payout": 9000, "roi": 0.9} for i in range(1, 8)]
+        title, _, _ = generate_track_record_article(acc_trend, roi_trend, _make_stats())
+        assert "48" in title
+
+
+# ── v4: B2 Grade Markers ───────────────────────────────────
+
+
+class TestGradeMarkers:
+    def test_markers_defined(self) -> None:
+        assert GRADE_MARKERS["S"] == "◎"
+        assert GRADE_MARKERS["A"] == "○"
+        assert GRADE_MARKERS["B"] == "△"
+        assert GRADE_MARKERS["C"] == "✕"
+
+    def test_grade_header_has_marker(self) -> None:
+        grades = _make_grades(s_count=2, a_count=3)
+        _, html, _ = generate_grade_summary_article("2026-03-12", grades)
+        assert "◎ 推奨度Sランク" in html
+        assert "○ 推奨度Aランク" in html
+
+    def test_grade_c_marker(self) -> None:
+        grades = [{"stadium_number": 1, "race_number": 1, "grade": "C", "top1_prob": 0.15}]
+        _, html, _ = generate_grade_summary_article("2026-03-12", grades)
+        assert "✕ 推奨度Cランク" in html
+
+
+# ── v4: D3 Dynamic Hashtags ────────────────────────────────
+
+
+class TestDynamicHashtags:
+    def test_accuracy_hashtags_manshuu(self) -> None:
+        records = _make_accuracy_records()
+        records[0]["trifecta_payout"] = 15000
+        _, _, tags = generate_accuracy_report("2026-03-01", records, _make_stats())
+        assert "万舟" in tags
+
+    def test_accuracy_hashtags_roi_high(self) -> None:
+        records = _make_accuracy_records()
+        roi_stats = {"total_bets": 5, "roi": 1.5, "total_invested": 5000,
+                     "total_payout": 7500, "profit": 2500}
+        _, _, tags = generate_accuracy_report(
+            "2026-03-01", records, _make_stats(), roi_stats=roi_stats,
+        )
+        assert "回収率100超" in tags
+
+    def test_grades_hashtags_include_free(self) -> None:
+        grades = _make_grades()
+        _, _, tags = generate_grade_summary_article("2026-03-12", grades)
+        assert "無料予想" in tags
+
+    def test_hashtags_dynamic_tags_param(self) -> None:
+        tags = _build_hashtags(article_type="results", dynamic_tags=["万舟", "テスト"])
+        assert "万舟" in tags
+        assert "テスト" in tags
+
+
+# ── v4: A2 Race Drama ──────────────────────────────────────
+
+
+class TestRaceDrama:
+    def test_drama_templates_exist(self) -> None:
+        assert len(_RACE_DRAMA) == 6
+        for tech in ["逃げ", "差し", "まくり", "まくり差し", "抜き", "恵まれ"]:
+            assert tech in _RACE_DRAMA
+
+    def test_hit_analysis_with_drama(self) -> None:
+        record = {"trifecta_payout": 5000}
+        result = {"technique_number": 3, "first_place": 4}
+        text = _build_hit_analysis(record, None, result)
+        assert "まくり" in text
+        assert "4号艇" in text
+
+    def test_hit_analysis_makuri_sashi(self) -> None:
+        record = {"trifecta_payout": 8000}
+        result = {"technique_number": 4, "first_place": 2}
+        text = _build_hit_analysis(record, None, result)
+        assert "まくり差し" in text
+        assert "2号艇" in text
+
+    def test_hit_analysis_nige(self) -> None:
+        record = {"trifecta_payout": 3000}
+        result = {"technique_number": 1, "first_place": 1}
+        text = _build_hit_analysis(record, None, result)
+        assert "逃げ切り" in text
+        assert "1号艇" in text
+
+
+# ── v4: C4 Membership Performance ──────────────────────────
+
+
+class TestMembershipPerformance:
+    def test_membership_has_performance(self) -> None:
+        stats = {**_make_stats(), "hit_trifecta_count": 15}
+        _, html, _ = generate_membership_article(stats)
+        assert "直近の実績" in html
+        assert "15" in html
+        assert "3連単的中" in html
+
+    def test_membership_has_total_races(self) -> None:
+        _, html, _ = generate_membership_article(_make_stats())
+        assert "分析レース数" in html
+        assert "48" in html
+
+
+# ── v4: A4 Tomorrow Preview ────────────────────────────────
+
+
+class TestTomorrowPreview:
+    def test_preview_shows_hot_venues(self) -> None:
+        records = _make_accuracy_records()
+        html = _build_tomorrow_preview(records)
+        assert "明日の注目" in html
+        assert "桐生" in html  # stadium 1, 1/2 hit = 50%
+
+    def test_preview_empty_when_no_hits(self) -> None:
+        records = [
+            {"stadium_number": 1, "race_number": 1, "hit_1st": False},
+            {"stadium_number": 6, "race_number": 2, "hit_1st": False},
+        ]
+        html = _build_tomorrow_preview(records)
+        assert html == ""
+
+    def test_preview_in_accuracy_html(self) -> None:
+        html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
+        assert "明日の注目" in html

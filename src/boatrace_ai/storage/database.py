@@ -604,6 +604,24 @@ def get_latest_article(article_type: str) -> dict | None:
         conn.close()
 
 
+def get_operation_days() -> int:
+    """Get number of days since first prediction was recorded."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT MIN(race_date) AS first_date FROM predictions",
+        ).fetchone()
+        if not row or not row["first_date"]:
+            return 0
+        first = row["first_date"]
+        from datetime import date
+
+        first_date = date.fromisoformat(first)
+        return (date.today() - first_date).days + 1
+    finally:
+        conn.close()
+
+
 def get_accuracy_trend(days: int = 30) -> list[dict]:
     """Daily accuracy trend. Returns list of {date, total, hit_1st, hit_1st_rate, hit_tri, hit_tri_rate}."""
     conn = _get_connection()

@@ -9,13 +9,16 @@ from boatrace_ai.data.models import PredictionResult, ProgramsResponse
 from boatrace_ai.publish.article import (
     DISCLAIMER,
     MEMBERSHIP_UPSELL,
+    _build_about_section,
     _build_accuracy_html,
     _build_accuracy_markdown,
     _build_daily_trends,
     _build_hashtags,
     _build_hit_analysis,
     _build_html,
+    _build_loss_analysis,
     _build_markdown,
+    _build_opening_hook,
     _build_related_articles,
     _build_trend_text,
     generate_accuracy_report,
@@ -347,7 +350,8 @@ class TestAccuracyReportHtml:
     def test_contains_cumulative_stats(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "累計実績" in html
-        assert "総予測: 48" in html
+        assert "48" in html
+        assert "総予測レース" in html
 
     def test_uses_h2_not_h1(self) -> None:
         html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
@@ -770,3 +774,127 @@ class TestTitleVariation:
         title, _, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "競艇AI予想 結果" in title
         assert "的中率" in title
+
+
+# ── Opening hook (施策A1) ─────────────────────────────────
+
+
+class TestOpeningHook:
+    def test_manshuu_hook(self) -> None:
+        hook = _build_opening_hook(50, 3, 100, max_payout=15000)
+        assert "万舟" in hook
+
+    def test_good_day_hook(self) -> None:
+        hook = _build_opening_hook(55, 6, 100, roi_pct=110)
+        assert "好調" in hook
+
+    def test_struggle_hook(self) -> None:
+        hook = _build_opening_hook(35, 1, 100)
+        assert "苦戦" in hook
+
+    def test_stable_hook(self) -> None:
+        hook = _build_opening_hook(52, 2, 100)
+        assert "安定" in hook
+
+    def test_default_hook(self) -> None:
+        hook = _build_opening_hook(42, 2, 100)
+        assert "まとめました" in hook
+
+    def test_hook_in_accuracy_html(self) -> None:
+        """Opening hook appears in accuracy report HTML."""
+        html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
+        # 67% hit rate -> stable hook
+        assert "安定" in html
+
+
+# ── Loss analysis (施策A3) ────────────────────────────────
+
+
+class TestLossAnalysis:
+    def _make_bad_records(self) -> list[dict]:
+        """Records with <45% hit rate to trigger loss analysis."""
+        records = []
+        for i in range(10):
+            records.append({
+                "race_date": "2026-03-01", "stadium_number": 1, "race_number": i + 1,
+                "predicted_1st": 1, "actual_1st": 4 if i < 7 else 1,
+                "hit_1st": i >= 7,
+                "predicted_trifecta": "1-3-2", "actual_trifecta": "4-1-5",
+                "hit_trifecta": False, "trifecta_payout": 0,
+            })
+        return records
+
+    def test_shows_on_bad_day(self) -> None:
+        loss = _build_loss_analysis(self._make_bad_records(), [])
+        assert "敗因分析" in loss
+        assert "苦戦" in loss
+
+    def test_hidden_on_good_day(self) -> None:
+        loss = _build_loss_analysis(_make_accuracy_records(), [])
+        assert loss == ""
+
+    def test_in_accuracy_html(self) -> None:
+        """Loss analysis appears in accuracy HTML on bad days."""
+        bad_records = self._make_bad_records()
+        html = _build_accuracy_html("2026-03-01", bad_records, _make_stats())
+        assert "敗因分析" in html
+
+
+# ── About section (施策E1) ────────────────────────────────
+
+
+class TestAboutSection:
+    def test_static_fallback(self) -> None:
+        about = _build_about_section()
+        assert "水理AIとは" in about
+        assert "全履歴公開" in about
+
+    def test_with_stats(self) -> None:
+        about = _build_about_section(_make_stats())
+        assert "48" in about
+        assert "累計分析" in about
+
+    def test_in_accuracy_html(self) -> None:
+        html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
+        assert "水理AIとは" in html
+        assert "累計分析" in html
+
+
+# ── Decorations (施策B1) ──────────────────────────────────
+
+
+class TestDecorations:
+    def test_accuracy_html_has_decorations(self) -> None:
+        html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
+        assert "━━" in html
+        assert "◆" in html
+
+    def test_related_links_decorated(self) -> None:
+        links = {
+            "grades": {"note_url": "https://note.com/suiri_ai/n/abc", "title": "grades"},
+        }
+        html = _build_related_articles("midday", links)
+        assert "◇" in html
+        assert "<ul>" in html
+
+    def test_track_record_pseudo_table(self) -> None:
+        from boatrace_ai.publish.article import _build_track_record
+        html = _build_track_record(_make_stats())
+        assert "<ul>" in html
+        assert "総予測レース" in html
+        assert "48" in html
+
+
+# ── CTA (施策C1/C2) ──────────────────────────────────────
+
+
+class TestCTA:
+    def test_follow_cta_in_accuracy(self) -> None:
+        html = _build_accuracy_html("2026-03-01", _make_accuracy_records(), _make_stats())
+        assert "朝7:30" in html
+        assert "フォロー" in html
+
+    def test_follow_cta_in_midday(self) -> None:
+        _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
+        assert "フォロー" in html
+        assert "365日" in html

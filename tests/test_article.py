@@ -125,9 +125,9 @@ class TestBuildHtml:
         html = _build_html(race, prediction)
         # No <table> tag
         assert "<table>" not in html
-        # Each boat as individual <p> with bold boat number
+        # Each boat with number and name
         for boat in race.boats:
-            assert f"<strong>{boat.racer_boat_number}号艇</strong>" in html
+            assert f"{boat.racer_boat_number}号艇" in html
             assert boat.racer_name in html
 
     def test_contains_disclaimer(self) -> None:
@@ -555,7 +555,7 @@ class TestMiddayReport:
     def test_html_contains_highlight(self) -> None:
         _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
         assert "午前のハイライト" in html
-        assert "3連単的中!" in html
+        assert "1-3-2" in html  # predicted trifecta in highlight
 
     def test_html_no_pay_tag(self) -> None:
         _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
@@ -583,7 +583,7 @@ class TestMembershipArticle:
     def test_html_contains_benefits(self) -> None:
         _, html, _ = generate_membership_article(_make_stats())
         assert "メンバー特典" in html
-        assert "月額¥1,000" in html
+        assert "¥1,000" in html
         assert "Sランク" in html
 
     def test_html_contains_track_record(self) -> None:

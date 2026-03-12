@@ -308,7 +308,7 @@ def _build_html(
 
     # ── Free section ──
     grade_label = f"【推奨度{grade}】" if grade else ""
-    parts.append(f"<h2>{grade_label}{stadium}競艇 第{race.race_number}R AI予測｜{race.race_date}</h2>")
+    parts.append(f"<h2>━━ {grade_label}{stadium}競艇 第{race.race_number}R AI予測 ━━</h2>")
 
     # Context line about this race
     grade_desc = {
@@ -321,7 +321,7 @@ def _build_html(
     if context_text:
         parts.append(f"<p>{stadium} 第{race.race_number}R。{context_text}</p>")
 
-    parts.append("<h3>予測着順</h3>")
+    parts.append("<h3>◆ 予測着順</h3>")
     for i, boat_num in enumerate(top3, 1):
         boat = boat_map.get(boat_num)
         name = boat.racer_name if boat else "?"
@@ -329,7 +329,7 @@ def _build_html(
 
     parts.append(f"<p><strong>信頼度: {confidence_pct}%</strong></p>")
 
-    parts.append("<h3>推奨買い目</h3>")
+    parts.append("<h3>◆ 推奨買い目</h3>")
     bets_html = "".join(f"<li>{bet}</li>" for bet in prediction.recommended_bets)
     parts.append(f"<ul>{bets_html}</ul>")
 
@@ -343,11 +343,11 @@ def _build_html(
         parts.append("<pay>")
 
     # ── Detail section (paid when not free, always included) ──
-    parts.append("<h2>AI詳細分析</h2>")
+    parts.append("<h2>━━ AI詳細分析 ━━</h2>")
     parts.append(f"<p>{prediction.analysis}</p>")
 
-    # Race data — each boat as a formatted <p> line
-    parts.append("<h2>出走表データ</h2>")
+    # Race data — each boat as structured list
+    parts.append("<h2>━━ 出走表データ ━━</h2>")
     parts.append("<p>各艇の選手成績・機力データを一覧で確認できます。</p>")
     for boat in race.boats:
         cls = RACER_CLASSES.get(boat.racer_class_number, "?")
@@ -357,29 +357,28 @@ def _build_html(
             else "-"
         )
         parts.append(
-            f"<p>"
-            f"<strong>{boat.racer_boat_number}号艇</strong>｜"
-            f"{boat.racer_name}（{cls}）"
-            f"</p>"
-            f"<p>"
-            f"全国勝率 {boat.racer_national_top_1_percent:.1f}%｜"
-            f"当地勝率 {boat.racer_local_top_1_percent:.1f}%｜"
-            f"平均ST {st}｜"
-            f"モーター {boat.racer_assigned_motor_top_2_percent:.1f}%｜"
-            f"ボート {boat.racer_assigned_boat_top_2_percent:.1f}%"
-            f"</p>"
+            f"<h3>◆ {boat.racer_boat_number}号艇　{boat.racer_name}（{cls}）</h3>"
+        )
+        parts.append(
+            "<ul>"
+            f"<li>全国勝率 … <strong>{boat.racer_national_top_1_percent:.1f}%</strong></li>"
+            f"<li>当地勝率 … <strong>{boat.racer_local_top_1_percent:.1f}%</strong></li>"
+            f"<li>平均ST …… <strong>{st}</strong></li>"
+            f"<li>モーター … <strong>{boat.racer_assigned_motor_top_2_percent:.1f}%</strong></li>"
+            f"<li>ボート …… <strong>{boat.racer_assigned_boat_top_2_percent:.1f}%</strong></li>"
+            "</ul>"
         )
     if not free:
         parts.append("<hr>")
 
     # Full predicted order
-    parts.append("<h3>全着順予測</h3>")
+    parts.append("<h3>◆ 全着順予測</h3>")
     order_str = " → ".join(str(n) for n in prediction.predicted_order)
     parts.append(f"<p>{order_str}</p>")
 
     # Footer
     parts.append(ABOUT_SUIRI_AI)
-    parts.append("<h3>注意事項</h3>")
+    parts.append("<h3>◆ 注意事項</h3>")
     parts.append(f"<p>{DISCLAIMER}</p>")
 
     return "\n".join(parts)
@@ -1074,7 +1073,7 @@ def generate_grade_summary_article(
     )
 
     # ── Opening (first sentence = meta description for SEO) ──
-    parts.append("<h2>本日の競艇AI予想</h2>")
+    parts.append("<h2>━━ 本日の競艇AI予想 ━━</h2>")
 
     # Dynamic opening based on what makes today interesting
     if s_count >= 5:
@@ -1320,7 +1319,7 @@ def generate_track_record_article(
     parts: list[str] = []
 
     # First sentence = OGP/meta description
-    parts.append("<h2>水理AI 過去30日間の予測実績</h2>")
+    parts.append("<h2>━━ 水理AI 過去30日間の予測実績 ━━</h2>")
     parts.append(
         f"<p>ボートレースAI予想「水理AI」の直近30日間の的中率・回収率を全データ公開。"
         f"1着的中率{hit_1st_pct}%、回収率{roi_pct}%の推移です。</p>"
@@ -1427,25 +1426,29 @@ def generate_midday_report(
     hit_tri_pct = round(hit_tri / total * 100) if total else 0
 
     # First sentence = OGP — urgent 速報 tone
-    parts.append("<h2>午前の部 結果速報</h2>")
+    parts.append("<h2>━━ 午前の部 結果速報 ━━</h2>")
     parts.append(
         f"<p>{date_short} 午前{total}レースの中間結果が出ました。</p>"
     )
     parts.append(
-        f"<p><strong>1着的中: {hit_1st}/{total}（{hit_1st_pct}%）| "
-        f"3連単的中: {hit_tri}/{total}（{hit_tri_pct}%）</strong></p>"
+        "<ul>"
+        f"<li>1着的中 … <strong>{hit_1st}/{total}（{hit_1st_pct}%）</strong></li>"
+        f"<li>3連単的中 … <strong>{hit_tri}/{total}（{hit_tri_pct}%）</strong></li>"
+        "</ul>"
     )
 
     # Highlights
     tri_hits = [r for r in records if r["hit_trifecta"]]
     if tri_hits:
         parts.append("<h3>◆ 午前のハイライト</h3>")
+        hit_items: list[str] = []
         for r in tri_hits:
             stadium = STADIUMS.get(r["stadium_number"], str(r["stadium_number"]))
-            parts.append(
-                f"<p><strong>{stadium} {r['race_number']}R — 3連単的中!</strong> "
-                f"予測: {r['predicted_trifecta']} → 結果: {r['actual_trifecta']}</p>"
+            hit_items.append(
+                f"<li><strong>◎ {stadium} {r['race_number']}R</strong>"
+                f"　予測 {r['predicted_trifecta']} → 結果 {r['actual_trifecta']}</li>"
             )
+        parts.append(f"<ul>{''.join(hit_items)}</ul>")
 
     # C2: Afternoon CTA
     parts.append("<hr>")
@@ -1493,7 +1496,7 @@ def generate_membership_article(
 
     parts: list[str] = []
 
-    parts.append("<h2>水理AIメンバーシップのご案内</h2>")
+    parts.append("<h2>━━ 水理AIメンバーシップのご案内 ━━</h2>")
     parts.append(
         "<p>ボートレースAI予想「水理AI」の毎朝のSランク詳細予測・買い目を月額制でお届けします。</p>"
     )
@@ -1508,8 +1511,12 @@ def generate_membership_article(
     )
 
     parts.append("<h3>◆ 料金</h3>")
+    rounded_daily = round(config.NOTE_MEMBERSHIP_PRICE / 30)
     parts.append(
-        f"<p><strong>月額¥{config.NOTE_MEMBERSHIP_PRICE:,}</strong>（1日約¥{round(config.NOTE_MEMBERSHIP_PRICE / 30)}）</p>"
+        "<ul>"
+        f"<li>月額 … <strong>¥{config.NOTE_MEMBERSHIP_PRICE:,}</strong></li>"
+        f"<li>1日あたり … <strong>約¥{rounded_daily}</strong></li>"
+        "</ul>"
     )
 
     # C4: Performance-based membership appeal

@@ -142,7 +142,7 @@ def _predict_raw(
     return predicted_order, norm_probs
 
 
-ODDS_BLEND_ALPHA = 0.7  # weight for model probability (0.3 for odds-implied)
+ODDS_BLEND_ALPHA = 0.85  # weight for model probability (0.15 for odds-implied)
 
 
 def _blend_with_odds(

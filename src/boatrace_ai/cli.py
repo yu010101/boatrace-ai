@@ -120,28 +120,42 @@ def _try_grade_and_save(race, prediction, mode: str, odds_data=None) -> str | No
         )
         display_race_grade(grade_result)
 
-        # Save virtual bets with EV metadata if available
-        ev_bets = get_last_ev_bets(race)
-        if ev_bets:
-            save_virtual_bets(
-                race.race_date,
-                race.race_stadium_number,
-                race.race_number,
-                [b.to_bet_string() for b in ev_bets],
-                grade=grade_result.grade.value,
-                bet_amounts=[b.bet_amount for b in ev_bets],
-                model_probs=[b.model_prob for b in ev_bets],
-                market_odds=[b.market_odds for b in ev_bets],
-                evs=[b.ev for b in ev_bets],
-            )
-        elif prediction.recommended_bets:
-            save_virtual_bets(
-                race.race_date,
-                race.race_stadium_number,
-                race.race_number,
-                prediction.recommended_bets,
-                grade=grade_result.grade.value,
-            )
+        # Save virtual bets — only for allowed grades (default: S, A)
+        allowed_grades = [g.strip() for g in config.BET_GRADES.split(",")]
+        if grade_result.grade.value in allowed_grades:
+            ev_bets = get_last_ev_bets(race)
+            if ev_bets:
+                # Filter to high-ROI bet types: 単勝 and 2連単 only
+                filtered = [b for b in ev_bets if b.bet_type in ("単勝", "2連単")]
+                if filtered:
+                    save_virtual_bets(
+                        race.race_date,
+                        race.race_stadium_number,
+                        race.race_number,
+                        [b.to_bet_string() for b in filtered],
+                        grade=grade_result.grade.value,
+                        bet_amounts=[b.bet_amount for b in filtered],
+                        model_probs=[b.model_prob for b in filtered],
+                        market_odds=[b.market_odds for b in filtered],
+                        evs=[b.ev for b in filtered],
+                    )
+            elif prediction.recommended_bets:
+                # Legacy: filter to 単勝/2連単 only
+                filtered_bets = [
+                    b for b in prediction.recommended_bets
+                    if b.startswith("単勝") or b.startswith("2連単")
+                ]
+                if filtered_bets:
+                    save_virtual_bets(
+                        race.race_date,
+                        race.race_stadium_number,
+                        race.race_number,
+                        filtered_bets,
+                        grade=grade_result.grade.value,
+                    )
+        else:
+            # Consume ev_bets cache even if not saving
+            get_last_ev_bets(race)
 
         return grade_result.grade.value
     except Exception as e:

@@ -66,13 +66,18 @@ jobs:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish grades
+
+      - name: Cool-down before premium
+        run: sleep $(shuf -i 180-420 -n 1)
 
       - name: Publish S-rank paid articles
         env:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish premium
         timeout-minutes: 20
         continue-on-error: true
@@ -84,6 +89,15 @@ jobs:
           TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
           TWITTER_ACCESS_SECRET: ${{ secrets.TWITTER_ACCESS_SECRET }}
         run: boatrace tweet morning
+        continue-on-error: true
+
+      - name: Follow note.com creators
+        env:
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
+        run: boatrace engage note-follow --max 5
         continue-on-error: true
 
       - name: Engage with community (morning)
@@ -146,6 +160,7 @@ jobs:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish midday
 
       - name: Tweet midday report
@@ -211,7 +226,20 @@ jobs:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish results
+
+      - name: Cool-down before hit flash
+        run: sleep $(shuf -i 120-300 -n 1)
+
+      - name: Publish hit flash (if big win)
+        env:
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
+        run: boatrace publish hit-flash --min-payout 5000
+        continue-on-error: true
 
       - name: Tweet hit announcements
         env:
@@ -282,6 +310,7 @@ jobs:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish track-record
 
       - name: Save data cache

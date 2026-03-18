@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from pathlib import Path
 
 import httpx
@@ -48,11 +49,24 @@ API_HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 
-# User agent for Playwright
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
+# User agents for rotation (avoid fingerprinting)
+_USER_AGENTS = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+]
+
+
+def _random_user_agent() -> str:
+    return random.choice(_USER_AGENTS)
+
+
+def _random_viewport() -> dict[str, int]:
+    """Return a viewport with slight random variation."""
+    return {
+        "width": 1280 + random.randint(-50, 50),
+        "height": 800 + random.randint(-50, 50),
+    }
 
 
 class NoteAuthError(Exception):
@@ -90,8 +104,8 @@ class NoteClient:
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
         self._browser_context = await self._browser.new_context(
-            user_agent=USER_AGENT,
-            viewport={"width": 1280, "height": 800},
+            user_agent=_random_user_agent(),
+            viewport=_random_viewport(),
             locale="ja-JP",
         )
         # Set cookies for authentication
@@ -127,6 +141,25 @@ class NoteClient:
         data = {"cookies": self._cookies, "xsrf_token": self._xsrf_token}
         self._session_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         log.info("Session saved to %s", self._session_path)
+
+    def _load_session_from_env(self) -> bool:
+        """Load session cookies from NOTE_SESSION_COOKIES env var.
+
+        This bypasses Playwright login entirely — useful for CI where CAPTCHA blocks login.
+        The env var should contain the JSON output of 'boatrace note export-session'.
+        """
+        raw = config.NOTE_SESSION_COOKIES
+        if not raw:
+            return False
+        try:
+            data = json.loads(raw)
+            self._cookies = data["cookies"]
+            self._xsrf_token = data.get("xsrf_token", "")
+            log.info("Session loaded from NOTE_SESSION_COOKIES env var")
+            return True
+        except (json.JSONDecodeError, KeyError) as e:
+            log.warning("Failed to load session from env: %s", e)
+            return False
 
     def _load_session(self) -> bool:
         """Load session cookies from disk. Returns True if loaded."""
@@ -210,7 +243,7 @@ class NoteClient:
             )
             try:
                 context = await browser.new_context(
-                    user_agent=USER_AGENT,
+                    user_agent=_random_user_agent(),
                     viewport={"width": 1280, "height": 800},
                     locale="ja-JP",
                 )
@@ -277,10 +310,19 @@ class NoteClient:
                 await browser.close()
 
     async def ensure_logged_in(self) -> None:
-        """Ensure we have a valid session, logging in if necessary."""
+        """Ensure we have a valid session, logging in if necessary.
+
+        Priority: env var (NOTE_SESSION_COOKIES) → file → Playwright login.
+        """
+        # 1. Try env var first (CI-friendly, no CAPTCHA)
+        if self._load_session_from_env() and await self._is_session_valid():
+            log.info("Session from env var is valid")
+            return
+        # 2. Try saved session file
         if self._load_session() and await self._is_session_valid():
             log.info("Existing session is valid")
             return
+        # 3. Fall back to Playwright login
         log.info("Session invalid or missing, logging in...")
         await self.login()
 
@@ -414,7 +456,7 @@ class NoteClient:
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
             )
             context = await standalone_browser.new_context(
-                user_agent=USER_AGENT,
+                user_agent=_random_user_agent(),
                 viewport={"width": 1280, "height": 800},
                 locale="ja-JP",
             )
@@ -479,6 +521,7 @@ class NoteClient:
                     "公開ボタンが見つかりませんでした。エディタUIが変更された可能性があります。"
                 )
 
+            await self._human_delay()
             await publish_btn.click()
             await asyncio.sleep(3)
             await page.wait_for_load_state("networkidle")
@@ -502,6 +545,7 @@ class NoteClient:
                     "投稿ボタンが見つかりませんでした。公開設定UIが変更された可能性があります。"
                 )
 
+            await self._human_delay()
             await final_btn.click()
             await asyncio.sleep(5)
             log.info("Final publish clicked. URL: %s", page.url)
@@ -686,6 +730,10 @@ class NoteClient:
 
     # Keep old name as alias for backward compatibility in _set_eyecatch_in_editor
     _handle_crop_modal = _dismiss_modals
+
+    async def _human_delay(self) -> None:
+        """Short random delay before actions to appear human."""
+        await asyncio.sleep(random.uniform(0.5, 2.0))
 
     async def _find_button(self, page, text_options: list[str]):
         """Find a visible button by text content, trying multiple options."""

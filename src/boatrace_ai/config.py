@@ -46,12 +46,40 @@ NOTE_USER_ID: str = os.environ.get("NOTE_USER_ID", "")
 NOTE_URLNAME: str = os.environ.get("NOTE_URLNAME", "suiri_ai")
 NOTE_ARTICLE_PRICE: int = int(os.environ.get("NOTE_ARTICLE_PRICE", "300"))
 NOTE_MEMBERSHIP_PRICE: int = int(os.environ.get("NOTE_MEMBERSHIP_PRICE", "1000"))
+NOTE_FREE_PERIOD: bool = os.environ.get("NOTE_FREE_PERIOD", "true").lower() == "true"
 
 _default_session = Path.home() / ".boatrace-ai" / "note_session.json"
 NOTE_SESSION_PATH: Path = Path(os.environ.get("NOTE_SESSION_PATH", str(_default_session)))
 
-# Interval between note.com posts (seconds) to avoid rate limiting
-NOTE_PUBLISH_INTERVAL: int = int(os.environ.get("NOTE_PUBLISH_INTERVAL", "10"))
+# Pre-exported session cookies (JSON string) — bypasses Playwright login entirely
+# Set via GitHub Secrets to avoid CAPTCHA on CI
+NOTE_SESSION_COOKIES: str = os.environ.get("NOTE_SESSION_COOKIES", "")
+
+# note.com anti-ban: humanized delays between posts (seconds)
+NOTE_PUBLISH_DELAY_MIN: int = int(os.environ.get("NOTE_PUBLISH_DELAY_MIN", "120"))   # 2分
+NOTE_PUBLISH_DELAY_MAX: int = int(os.environ.get("NOTE_PUBLISH_DELAY_MAX", "300"))   # 5分
+
+# note.com daily caps
+NOTE_DAILY_PUBLISH_CAP: int = int(os.environ.get("NOTE_DAILY_PUBLISH_CAP", "5"))
+NOTE_PREMIUM_CAP: int = int(os.environ.get("NOTE_PREMIUM_CAP", "3"))
+
+# Cron jitter to avoid fixed-time patterns (seconds)
+NOTE_CRON_JITTER_MAX: int = int(os.environ.get("NOTE_CRON_JITTER_MAX", "600"))  # 最大10分
+
+# Hashtag rotation
+NOTE_HASHTAG_COUNT_MIN: int = int(os.environ.get("NOTE_HASHTAG_COUNT_MIN", "4"))
+NOTE_HASHTAG_COUNT_MAX: int = int(os.environ.get("NOTE_HASHTAG_COUNT_MAX", "6"))
+
+# note.com follow settings
+NOTE_FOLLOW_MAX_PER_DAY: int = int(os.environ.get("NOTE_FOLLOW_MAX_PER_DAY", "5"))
+NOTE_FOLLOW_DELAY_MIN: int = int(os.environ.get("NOTE_FOLLOW_DELAY_MIN", "60"))
+NOTE_FOLLOW_DELAY_MAX: int = int(os.environ.get("NOTE_FOLLOW_DELAY_MAX", "180"))
+NOTE_FOLLOW_MAX_TAGS: int = int(os.environ.get("NOTE_FOLLOW_MAX_TAGS", "2"))
+
+# Google Gemini image generation (optional)
+GOOGLE_API_KEY: str = os.environ.get("GOOGLE_API_KEY", "")
+GEMINI_IMAGE_MODEL: str = os.environ.get("GEMINI_IMAGE_MODEL", "imagen-4.0-generate-001")
+GEMINI_EYECATCH_ENABLED: bool = os.environ.get("GEMINI_EYECATCH_ENABLED", "true").lower() == "true"
 
 # X (Twitter) API settings
 TWITTER_API_KEY: str = os.environ.get("TWITTER_API_KEY", "")

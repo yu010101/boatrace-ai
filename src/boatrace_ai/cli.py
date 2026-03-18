@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 from datetime import date, datetime, timedelta
 
 import click
@@ -42,6 +43,7 @@ from boatrace_ai.publish.article import (
     generate_accuracy_report,
     generate_article,
     generate_grade_summary_article,
+    generate_hit_flash_article,
     generate_membership_article,
     generate_midday_report,
     generate_track_record_article,
@@ -61,8 +63,10 @@ from boatrace_ai.storage.database import (
     get_roi_stats,
     get_roi_trend,
     get_stats,
+    get_today_publish_count,
     init_db,
     save_prediction,
+    save_publish_log,
     save_published_article,
     save_race_grade,
     save_race_odds,
@@ -76,6 +80,30 @@ log = logging.getLogger(__name__)
 VALID_STADIUMS = click.IntRange(1, 24)
 VALID_RACES = click.IntRange(1, 12)
 VALID_MODES = click.Choice(["auto", "ml", "claude", "hybrid"])
+
+
+async def _apply_jitter() -> None:
+    """Apply random startup jitter to avoid fixed-time cron patterns."""
+    if config.NOTE_CRON_JITTER_MAX > 0:
+        jitter = random.uniform(0, config.NOTE_CRON_JITTER_MAX)
+        log.info("起動ジッター: %.0f 秒", jitter)
+        await asyncio.sleep(jitter)
+
+
+async def _humanized_delay() -> None:
+    """Wait a randomized interval between posts to appear human."""
+    delay = random.uniform(config.NOTE_PUBLISH_DELAY_MIN, config.NOTE_PUBLISH_DELAY_MAX)
+    log.info("次の投稿まで %.0f 秒待機...", delay)
+    await asyncio.sleep(delay)
+
+
+def _check_daily_cap() -> bool:
+    """Return True if daily publish cap is reached."""
+    count = get_today_publish_count()
+    if count >= config.NOTE_DAILY_PUBLISH_CAP:
+        log.info("本日の投稿上限に達しました (%d/%d)", count, config.NOTE_DAILY_PUBLISH_CAP)
+        return True
+    return False
 
 
 def _parse_date(date_str: str | None) -> date | None:
@@ -757,6 +785,32 @@ async def _note_login() -> None:
         display_error(f"note.com ログインに失敗: {e}")
 
 
+@note.command("export-session")
+def note_export_session() -> None:
+    """セッションcookieをJSON出力（GitHub Secretsに保存用）"""
+    asyncio.run(_note_export_session())
+
+
+async def _note_export_session() -> None:
+    client = NoteClient()
+    # まずログインしてセッション取得
+    try:
+        with console.status("[bold green]note.com にログイン中..."):
+            await client.login()
+    except Exception as e:
+        display_error(f"note.com ログインに失敗: {e}")
+        return
+
+    # セッションJSONを出力
+    session_data = json.dumps(
+        {"cookies": client._cookies, "xsrf_token": client._xsrf_token},
+        ensure_ascii=False,
+    )
+    console.print("\n[bold yellow]以下をGitHub Secretsの NOTE_SESSION_COOKIES に設定してください:[/bold yellow]\n")
+    click.echo(session_data)
+    console.print("\n[dim]gh secret set NOTE_SESSION_COOKIES --body '<上記JSON>'[/dim]")
+
+
 @note.command("status")
 def note_status() -> None:
     """note.com ログイン状態を確認"""
@@ -872,9 +926,9 @@ async def _publish_today(
             display_error(f"{label} の投稿に失敗: {e}")
             failed += 1
 
-        # Rate limiting interval between posts
+        # Humanized delay between posts
         if i < total and not dry_run:
-            await asyncio.sleep(config.NOTE_PUBLISH_INTERVAL)
+            await _humanized_delay()
 
     display_publish_summary(success, failed, total)
 
@@ -964,6 +1018,9 @@ def publish_results(date_str: str | None, dry_run: bool) -> None:
 
 
 async def _publish_results(date_str: str | None, dry_run: bool) -> None:
+    if not dry_run and _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
     if date_str is None:
         target = date.today() - timedelta(days=1)
         target_str = target.isoformat()
@@ -1044,6 +1101,7 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
         return
 
     # Step 6: Publish to note.com
+    await _apply_jitter()
     try:
         note_client = NoteClient()
         with console.status("[bold green]note.com にログイン確認中..."):
@@ -1075,6 +1133,7 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
         display_publish_result(title, url, 0)
         if url:
             save_published_article(target_str, "results", url, title)
+            save_publish_log("results", title, url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1118,6 +1177,10 @@ def publish_grades(date_str: str | None, dry_run: bool) -> None:
 
 
 async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) -> None:
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
     try:
         note_client = NoteClient()
         with console.status("[bold green]note.com にログイン確認中..."):
@@ -1131,6 +1194,7 @@ async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) 
         display_publish_result(title, url, 0)
         if url:
             save_published_article(date.today().isoformat(), "grades", url, title)
+            save_publish_log("grades", title, url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1138,13 +1202,19 @@ async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) 
 @publish.command("premium")
 @click.argument("date_str", default=None, required=False)
 @click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
-def publish_premium(date_str: str | None, dry_run: bool) -> None:
+@click.option("--free", "free_override", is_flag=True, default=False, help="無料記事として投稿")
+def publish_premium(date_str: str | None, dry_run: bool, free_override: bool) -> None:
     """Sランクのみの有料記事を自動投稿"""
-    asyncio.run(_publish_premium(date_str, dry_run))
+    asyncio.run(_publish_premium(date_str, dry_run, free_override))
 
 
-async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
+async def _publish_premium(date_str: str | None, dry_run: bool, free_override: bool = False) -> None:
+    if not dry_run and _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+
     target_str = date_str or date.today().isoformat()
+    is_free = free_override or config.NOTE_FREE_PERIOD
 
     grades = get_grades_for_date(target_str)
     s_grades = [g for g in grades if g["grade"] == "S"]
@@ -1152,6 +1222,10 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
     if not s_grades:
         display_error(f"{target_str}のSランクレースがありません。")
         return
+
+    # Sort by top1_prob descending and limit to NOTE_PREMIUM_CAP
+    s_grades.sort(key=lambda g: g["top1_prob"], reverse=True)
+    s_grades = s_grades[:config.NOTE_PREMIUM_CAP]
 
     # Fetch programs for S-rank races
     try:
@@ -1173,8 +1247,13 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
         display_error("Sランクに対応するレースが見つかりません。")
         return
 
+    if not dry_run:
+        await _apply_jitter()
+
     total = len(races)
-    console.print(f"\n[bold]Sランク有料記事: {total} レース（¥{config.NOTE_ARTICLE_PRICE}）[/bold]")
+    price = 0 if is_free else config.NOTE_ARTICLE_PRICE
+    price_label = "無料" if is_free else f"¥{price}"
+    console.print(f"\n[bold]Sランク記事: {total} レース（{price_label}）[/bold]")
 
     # Prepare note client
     note_client: NoteClient | None = None
@@ -1211,11 +1290,11 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
                 continue
 
             title, html_body, hashtags = generate_article(
-                race, prediction, grade="S",
+                race, prediction, grade="S", free=is_free,
             )
 
             if dry_run:
-                md_text = _build_markdown(race, prediction, grade="S")
+                md_text = _build_markdown(race, prediction, grade="S", free=is_free)
                 display_article_preview(title, md_text)
                 success += 1
                 continue
@@ -1223,23 +1302,83 @@ async def _publish_premium(date_str: str | None, dry_run: bool) -> None:
             display_publish_progress(i, total, title)
             try:
                 result = await note_client.create_and_publish(
-                    title, html_body, price=config.NOTE_ARTICLE_PRICE, hashtags=hashtags,
+                    title, html_body, price=price, hashtags=hashtags,
                     eyecatch_title=title, article_type="prediction",
                 )
                 url = result.get("note_url", "")
-                display_publish_result(title, url, config.NOTE_ARTICLE_PRICE)
+                display_publish_result(title, url, price)
+                save_publish_log("premium", title, url)
                 success += 1
             except Exception as e:
                 display_error(f"{label} の投稿に失敗: {e}")
                 failed += 1
 
             if i < total:
-                await asyncio.sleep(config.NOTE_PUBLISH_INTERVAL)
+                await _humanized_delay()
     finally:
         if note_client is not None:
             await note_client.close_browser()
 
     display_publish_summary(success, failed, total)
+
+
+@publish.command("hit-flash")
+@click.argument("date_str", default=None, required=False)
+@click.option("--min-payout", default=5000, type=int, help="最低払戻金額 (default: 5000)")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def publish_hit_flash(date_str: str | None, min_payout: int, dry_run: bool) -> None:
+    """高額3連単的中時に速報記事を投稿"""
+    target_str = date_str or (date.today() - timedelta(days=1)).isoformat()
+
+    records = get_accuracy_for_date(target_str)
+    big_hits = [
+        r for r in records
+        if r["hit_trifecta"] and r["trifecta_payout"] >= min_payout
+    ]
+
+    if not big_hits:
+        console.print(f"[dim]{target_str}: {min_payout}円以上の3連単的中なし。スキップ。[/dim]")
+        return
+
+    # Pick the highest payout hit (1 article only to avoid spam)
+    best = max(big_hits, key=lambda r: r["trifecta_payout"])
+    stadium_name = STADIUMS.get(best["stadium_number"], str(best["stadium_number"]))
+    console.print(
+        f"\n[bold green]的中速報: {stadium_name} {best['race_number']}R "
+        f"3連単 ¥{best['trifecta_payout']:,}[/bold green]"
+    )
+
+    stats = get_stats()
+    title, html_body, hashtags = generate_hit_flash_article(target_str, best, stats)
+
+    if dry_run:
+        display_article_preview(title, html_body)
+        return
+
+    asyncio.run(_publish_hit_flash_note(title, html_body, hashtags))
+
+
+async def _publish_hit_flash_note(title: str, html_body: str, hashtags: list[str]) -> None:
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
+    try:
+        note_client = NoteClient()
+        with console.status("[bold green]note.com にログイン確認中..."):
+            await note_client.ensure_logged_in()
+        with console.status("[bold green]的中速報を投稿中..."):
+            result = await note_client.create_and_publish(
+                title, html_body, price=0, hashtags=hashtags,
+                eyecatch_title=title, article_type="hit_flash",
+            )
+        url = result.get("note_url", "")
+        display_publish_result(title, url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "hit_flash", url, title)
+            save_publish_log("hit_flash", title, url)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
 
 
 @publish.command("track-record")
@@ -1279,6 +1418,10 @@ async def _publish_track_record(days: int, dry_run: bool) -> None:
         console.print(html_body)
         return
 
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
     try:
         note_client = NoteClient()
         with console.status("[bold green]note.com にログイン確認中..."):
@@ -1292,6 +1435,7 @@ async def _publish_track_record(days: int, dry_run: bool) -> None:
         display_publish_result(title, url, 0)
         if url:
             save_published_article(date.today().isoformat(), "track_record", url, title)
+            save_publish_log("track_record", title, url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1305,6 +1449,9 @@ def publish_midday(date_str: str | None, dry_run: bool) -> None:
 
 
 async def _publish_midday(date_str: str | None, dry_run: bool) -> None:
+    if not dry_run and _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
     target_str = date_str or date.today().isoformat()
 
     # Fetch & save results so far
@@ -1347,6 +1494,7 @@ async def _publish_midday(date_str: str | None, dry_run: bool) -> None:
         console.print(html_body)
         return
 
+    await _apply_jitter()
     try:
         note_client = NoteClient()
         with console.status("[bold green]note.com にログイン確認中..."):
@@ -1360,6 +1508,7 @@ async def _publish_midday(date_str: str | None, dry_run: bool) -> None:
         display_publish_result(title, url, 0)
         if url:
             save_published_article(target_str, "midday", url, title)
+            save_publish_log("midday", title, url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1383,6 +1532,10 @@ async def _publish_membership(dry_run: bool) -> None:
         console.print(html_body)
         return
 
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
     try:
         note_client = NoteClient()
         with console.status("[bold green]note.com にログイン確認中..."):
@@ -1396,6 +1549,7 @@ async def _publish_membership(dry_run: bool) -> None:
         display_publish_result(title, url, 0)
         if url:
             save_published_article(date.today().isoformat(), "membership", url, title)
+            save_publish_log("membership", title, url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1615,6 +1769,49 @@ def engage_auto(timing: str, dry_run: bool) -> None:
         console.print(f"  スキップ: {summary['skipped']}")
     except Exception as e:
         display_error(f"エンゲージメント実行に失敗: {e}")
+
+
+@engage.command("note-follow")
+@click.option("--dry-run", is_flag=True, help="フォローせず発見クリエイター一覧のみ表示")
+@click.option("--max", "max_follows", default=20, type=int, help="最大フォロー数 (default: 20)")
+@click.option("--tags", default=None, help="カンマ区切りのタグ (default: 競艇予想,ボートレース予想,...)")
+def engage_note_follow(dry_run: bool, max_follows: int, tags: str | None) -> None:
+    """note.com 競艇関連クリエイターを自動フォロー"""
+    from boatrace_ai.social.note_follow import execute_note_follow
+
+    tag_list = tags.split(",") if tags else None
+
+    console.print(f"\n[bold]note.com 自動フォロー[/bold]")
+    if dry_run:
+        console.print("[yellow]--dry-run モード[/yellow]")
+
+    try:
+        result = asyncio.get_event_loop().run_until_complete(
+            execute_note_follow(
+                max_follows=max_follows,
+                tags=tag_list,
+                dry_run=dry_run,
+            )
+        )
+
+        if result.get("already_at_limit"):
+            console.print("[yellow]本日のフォロー上限に達しています[/yellow]")
+            return
+
+        console.print(f"\n[bold]結果:[/bold]")
+        console.print(f"  発見クリエイター数: {result['discovered']}")
+        console.print(f"  フォロー成功: {result['followed']}")
+        console.print(f"  スキップ: {result['skipped']}")
+
+        if dry_run and result.get("creators"):
+            console.print(f"\n[bold]発見クリエイター:[/bold]")
+            for c in result["creators"]:
+                console.print(
+                    f"  @{c['urlname']} ({c['display_name']}) [tag: {c['source_tag']}]"
+                )
+
+    except Exception as e:
+        display_error(f"note.comフォロー実行に失敗: {e}")
 
 
 @engage.command("stats")

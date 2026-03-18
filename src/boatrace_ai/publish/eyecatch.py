@@ -219,12 +219,141 @@ def _build_eyecatch_html(
 </html>"""
 
 
+# ── Gemini AI image generation prompts ────────────────────────
+
+GEMINI_PROMPTS: dict[str, str] = {
+    "prediction": (
+        "A dramatic dawn scene at a Japanese boat racing stadium. "
+        "Racing boats lined up on calm glowing water, with a futuristic "
+        "digital data overlay of statistics and graphs floating in the air. "
+        "Cinematic lighting, blue and cyan color palette, no text."
+    ),
+    "grades": (
+        "A dramatic dawn scene at a Japanese boat racing stadium. "
+        "Racing boats lined up on calm glowing water, with a futuristic "
+        "digital data overlay of statistics and graphs floating in the air. "
+        "Cinematic lighting, blue and cyan color palette, no text."
+    ),
+    "results": (
+        "A triumphant moment at a boat race venue bathed in golden light. "
+        "A racing boat crossing the finish line with splashing water, "
+        "celebration atmosphere, warm gold and blue tones, no text."
+    ),
+    "track_record": (
+        "A futuristic holographic dashboard floating in dark space, "
+        "showing glowing charts, graphs, and data visualizations in cyan "
+        "and blue colors. Clean, modern, data science aesthetic, no text."
+    ),
+    "midday": (
+        "A dynamic midday scene at a boat racing stadium. Racing boats "
+        "speeding through bright blue water with dramatic splashes, "
+        "vivid daylight, energetic atmosphere, no text."
+    ),
+    "membership": (
+        "An elegant premium membership card design with gold and deep blue "
+        "colors, subtle geometric patterns, luxury feel with metallic "
+        "reflections, sophisticated and exclusive atmosphere, no text."
+    ),
+}
+
+
+async def generate_gemini_eyecatch(
+    title: str,
+    article_type: str = "prediction",
+    subtitle: str | None = None,
+) -> Path | None:
+    """Generate an eyecatch image using Google Gemini image generation.
+
+    Args:
+        title: Article title (used to enrich the prompt).
+        article_type: One of prediction, grades, results, midday,
+                      track_record, membership.
+        subtitle: Optional subtitle (currently unused but kept for API compat).
+
+    Returns:
+        Path to the generated PNG file, or None if unavailable/failed.
+    """
+    from boatrace_ai import config
+
+    if not config.GOOGLE_API_KEY or not config.GEMINI_EYECATCH_ENABLED:
+        return None
+
+    try:
+        from google import genai
+    except ImportError:
+        log.warning("google-genai が未インストールのためGemini画像生成をスキップ")
+        return None
+
+    base_prompt = GEMINI_PROMPTS.get(article_type, GEMINI_PROMPTS["prediction"])
+    # Enrich prompt with title context
+    display_title = title.replace(" — 水理AI", "")
+    prompt = (
+        f"{base_prompt} "
+        f"The theme of this image is related to: {display_title}"
+    )
+
+    try:
+        client = genai.Client(api_key=config.GOOGLE_API_KEY)
+        response = client.models.generate_images(
+            model=config.GEMINI_IMAGE_MODEL,
+            prompt=prompt,
+            config=genai.types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="16:9",
+            ),
+        )
+
+        if not response.generated_images:
+            log.warning("Gemini画像生成: 画像が返されませんでした")
+            return None
+
+        image_bytes = response.generated_images[0].image.image_bytes
+
+        tmp_dir = tempfile.mkdtemp(prefix="eyecatch_gemini_")
+        png_path = Path(tmp_dir) / "eyecatch.png"
+        png_path.write_bytes(image_bytes)
+        log.info("Gemini eyecatch generated: %s", png_path)
+        return png_path
+
+    except Exception as e:
+        log.warning("Gemini画像生成に失敗 (HTML方式にフォールバック): %s", e)
+        return None
+
+
 async def generate_eyecatch(
     title: str,
     article_type: str = "prediction",
     subtitle: str | None = None,
 ) -> Path | None:
-    """Generate an OGP eyecatch image using Playwright.
+    """Generate an OGP eyecatch image.
+
+    First attempts Gemini AI image generation. Falls back to HTML+Playwright
+    if Gemini is unavailable or fails.
+
+    Args:
+        title: Article title to display on the image.
+        article_type: One of prediction, grades, results, midday,
+                      track_record, membership.
+        subtitle: Optional subtitle line (e.g. "Sランク 5レース").
+
+    Returns:
+        Path to the generated PNG file (in a temp directory), or None on failure.
+    """
+    # Try Gemini first
+    gemini_path = await generate_gemini_eyecatch(title, article_type, subtitle)
+    if gemini_path:
+        return gemini_path
+
+    # Fallback: HTML → Playwright
+    return await _generate_html_eyecatch(title, article_type, subtitle)
+
+
+async def _generate_html_eyecatch(
+    title: str,
+    article_type: str = "prediction",
+    subtitle: str | None = None,
+) -> Path | None:
+    """Generate an OGP eyecatch image using HTML + Playwright (fallback).
 
     Args:
         title: Article title to display on the image.

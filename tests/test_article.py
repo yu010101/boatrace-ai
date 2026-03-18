@@ -178,17 +178,22 @@ class TestBuildMarkdown:
 
 
 class TestBuildHashtags:
-    def test_contains_standard_tags(self) -> None:
+    def test_contains_anchor_tags(self) -> None:
         race = _load_race()
         tags = _build_hashtags(race)
-        assert "競艇" in tags
-        assert "ボートレース" in tags
-        assert "AI予測" in tags
+        assert "水理AI" in tags
+        assert "AI競艇予想" in tags
 
-    def test_contains_stadium_name(self) -> None:
+    def test_tag_count_within_range(self) -> None:
         race = _load_race()
         tags = _build_hashtags(race)
-        assert "桐生" in tags
+        assert 4 <= len(tags) <= 6
+
+    def test_tags_vary_between_calls(self) -> None:
+        race = _load_race()
+        results = [tuple(_build_hashtags(race)) for _ in range(20)]
+        # With randomization, not all calls should return the same set
+        assert len(set(results)) > 1
 
 
 # ── generate_article ───────────────────────────────────────
@@ -409,40 +414,31 @@ class TestGenerateAccuracyReport:
         _, html, _ = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
         assert "<pay>" not in html
 
-    def test_hashtags_contain_standard_tags(self) -> None:
+    def test_hashtags_contain_anchor_tags(self) -> None:
         _, _, hashtags = generate_accuracy_report("2026-03-01", _make_accuracy_records(), _make_stats())
-        assert "AI予測" in hashtags
         assert "水理AI" in hashtags
+        assert "AI競艇予想" in hashtags
 
 
 # ── Hashtag article_type ─────────────────────────────────────
 
 
 class TestHashtagsByArticleType:
-    def test_prediction_type(self) -> None:
-        tags = _build_hashtags(article_type="prediction")
-        assert "競艇予想" in tags
-        assert "無料予想" in tags
+    def test_anchor_tags_always_present(self) -> None:
+        for article_type in ("prediction", "results", "track_record", "midday"):
+            tags = _build_hashtags(article_type=article_type)
+            assert "水理AI" in tags
+            assert "AI競艇予想" in tags
 
-    def test_results_type(self) -> None:
-        tags = _build_hashtags(article_type="results")
-        assert "競艇結果" in tags
-        assert "的中" in tags
+    def test_tag_count_in_range(self) -> None:
+        for article_type in ("prediction", "results", "track_record", "midday"):
+            tags = _build_hashtags(article_type=article_type)
+            assert 4 <= len(tags) <= 6
 
-    def test_track_record_type(self) -> None:
-        tags = _build_hashtags(article_type="track_record")
-        assert "競艇実績" in tags
-        assert "回収率推移" in tags
-
-    def test_midday_type(self) -> None:
-        tags = _build_hashtags(article_type="midday")
-        assert "競艇速報" in tags
-        assert "午前結果" in tags
-
-    def test_max_10_tags(self) -> None:
+    def test_max_tags_with_venues(self) -> None:
         race = _load_race()
         tags = _build_hashtags(race, venue_names=["桐生", "戸田", "江戸川"], article_type="prediction")
-        assert len(tags) <= 10
+        assert len(tags) <= 8  # anchors + up to max hashtag count
 
 
 # ── Related articles ──────────────────────────────────────────
@@ -525,11 +521,12 @@ class TestTrackRecordArticle:
         )
         assert "メンバーシップ" in html
 
-    def test_hashtags_are_track_record_type(self) -> None:
+    def test_hashtags_contain_anchors(self) -> None:
         _, _, hashtags = generate_track_record_article(
             _make_accuracy_trend(), _make_roi_trend(), _make_stats(),
         )
-        assert "競艇実績" in hashtags
+        assert "水理AI" in hashtags
+        assert "AI競艇予想" in hashtags
 
 
 # ── Midday report ─────────────────────────────────────────────
@@ -561,9 +558,10 @@ class TestMiddayReport:
         _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
         assert "<pay>" not in html
 
-    def test_hashtags_are_midday_type(self) -> None:
+    def test_hashtags_contain_anchors(self) -> None:
         _, _, hashtags = generate_midday_report("2026-03-01", _make_accuracy_records())
-        assert "競艇速報" in hashtags
+        assert "水理AI" in hashtags
+        assert "AI競艇予想" in hashtags
 
 
 # ── Membership article ────────────────────────────────────────

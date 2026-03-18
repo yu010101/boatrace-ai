@@ -27,6 +27,7 @@ ml = [
 ]
 publish = [
     "playwright>=1.40",
+    "google-genai>=1.0",
 ]
 social = [
     "tweepy>=4.14",

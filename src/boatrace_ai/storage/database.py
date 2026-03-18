@@ -814,6 +814,97 @@ def get_results_for_date(race_date: str) -> list[dict]:
         conn.close()
 
 
+# ── note_follow_log ───────────────────────────────────────
+
+
+def is_already_followed(target_urlname: str) -> bool:
+    """Check if a user has already been followed."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM note_follow_log WHERE target_urlname = ?",
+            (target_urlname,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def save_follow_log(
+    target_urlname: str,
+    target_display_name: str | None = None,
+    source_tag: str | None = None,
+) -> None:
+    """Record a follow action."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO note_follow_log
+               (target_urlname, target_display_name, source_tag)
+               VALUES (?, ?, ?)""",
+            (target_urlname, target_display_name, source_tag),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_today_follow_count() -> int:
+    """Get number of follows made today."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM note_follow_log WHERE followed_at >= date('now')",
+        ).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_total_follow_count() -> int:
+    """Get total number of follows made."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM note_follow_log",
+        ).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def save_publish_log(article_type: str, title: str, note_url: str | None = None) -> None:
+    """Record a note.com publish event for daily cap tracking."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO note_publish_log (article_type, title, note_url)
+               VALUES (?, ?, ?)""",
+            (article_type, title, note_url),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Table may not exist yet (pre-migration)
+        log.warning("note_publish_log table not found, skipping publish log")
+    finally:
+        conn.close()
+
+
+def get_today_publish_count() -> int:
+    """Get number of articles published today."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM note_publish_log WHERE published_at >= date('now')",
+        ).fetchone()
+        return row["cnt"] if row else 0
+    except sqlite3.OperationalError:
+        # Table may not exist yet (pre-migration)
+        return 0
+    finally:
+        conn.close()
+
+
 def get_accuracy_for_date(race_date: str) -> list[dict]:
     """Get accuracy records for a specific date.
 

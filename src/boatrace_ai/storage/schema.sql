@@ -135,4 +135,23 @@ CREATE INDEX IF NOT EXISTS idx_tweet_log_date ON tweet_log(race_date, tweet_type
 CREATE INDEX IF NOT EXISTS idx_race_odds_date ON race_odds(race_date);
 CREATE INDEX IF NOT EXISTS idx_race_odds_lookup ON race_odds(race_date, stadium_number, race_number);
 CREATE INDEX IF NOT EXISTS idx_engagement_log_date ON engagement_log(race_date, engagement_type);
+CREATE TABLE IF NOT EXISTS note_follow_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_urlname TEXT NOT NULL,
+    target_display_name TEXT,
+    source_tag TEXT,
+    followed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(target_urlname)
+);
+
+CREATE TABLE IF NOT EXISTS note_publish_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    article_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    note_url TEXT,
+    published_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_publish_log_date ON note_publish_log(published_at);
 CREATE INDEX IF NOT EXISTS idx_published_articles_type ON published_articles(article_type);
+CREATE INDEX IF NOT EXISTS idx_note_follow_log_urlname ON note_follow_log(target_urlname);

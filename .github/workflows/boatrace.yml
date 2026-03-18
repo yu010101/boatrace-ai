@@ -31,7 +31,7 @@ jobs:
       github.event.schedule == '30 22 * * *' ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'morning')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -70,7 +70,7 @@ jobs:
         run: boatrace publish grades
 
       - name: Cool-down before premium
-        run: sleep $(shuf -i 180-420 -n 1)
+        run: sleep $(shuf -i 60-180 -n 1)
 
       - name: Publish S-rank paid articles
         env:
@@ -184,7 +184,7 @@ jobs:
       github.event.schedule == '30 12 * * *' ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'evening')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -230,7 +230,7 @@ jobs:
         run: boatrace publish results
 
       - name: Cool-down before hit flash
-        run: sleep $(shuf -i 120-300 -n 1)
+        run: sleep $(shuf -i 60-180 -n 1)
 
       - name: Publish hit flash (if big win)
         env:

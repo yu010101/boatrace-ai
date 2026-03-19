@@ -60,7 +60,7 @@ NOTE_PUBLISH_DELAY_MIN: int = int(os.environ.get("NOTE_PUBLISH_DELAY_MIN", "120"
 NOTE_PUBLISH_DELAY_MAX: int = int(os.environ.get("NOTE_PUBLISH_DELAY_MAX", "300"))   # 5分
 
 # note.com daily caps
-NOTE_DAILY_PUBLISH_CAP: int = int(os.environ.get("NOTE_DAILY_PUBLISH_CAP", "8"))
+NOTE_DAILY_PUBLISH_CAP: int = int(os.environ.get("NOTE_DAILY_PUBLISH_CAP", "20"))
 NOTE_PREMIUM_CAP: int = int(os.environ.get("NOTE_PREMIUM_CAP", "3"))
 
 # Cron jitter to avoid fixed-time patterns (seconds)

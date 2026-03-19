@@ -895,7 +895,7 @@ def get_today_publish_count() -> int:
     conn = _get_connection()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM note_publish_log WHERE published_at >= date('now')",
+            "SELECT COUNT(*) as cnt FROM note_publish_log WHERE published_at >= date('now', '+9 hours', 'start of day', '-9 hours')",
         ).fetchone()
         return row["cnt"] if row else 0
     except sqlite3.OperationalError:

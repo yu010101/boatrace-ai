@@ -302,9 +302,9 @@ class TestCreateAndPublish:
         ):
             await client.create_and_publish("Title", "<p>Body</p>")
 
-            # Default price is 300 (from config), no hashtags
+            # Default price from config (980), no hashtags
             client._publish_via_editor.assert_called_once_with(
-                "nk1", 300, None, eyecatch_path=None,
+                "nk1", 980, None, eyecatch_path=None,
             )
 
     @pytest.mark.asyncio

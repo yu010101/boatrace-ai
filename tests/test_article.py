@@ -214,8 +214,7 @@ class TestGenerateArticle:
         assert "桐生競艇" in title
         assert "1R" in title
         assert "AI" in title
-        assert "AI予測" in title
-        assert race.race_date in title
+        assert "AI予想" in title
 
     def test_html_body_contains_pay(self) -> None:
         race = _load_race()

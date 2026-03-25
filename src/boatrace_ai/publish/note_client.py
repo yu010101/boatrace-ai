@@ -537,10 +537,23 @@ class NoteClient:
                 await self._set_paid_settings(page, price)
 
             # Step 5: Click "投稿する" button (final publish)
+            # Use exact match first to avoid "公開" matching "公開に進む" etc.
             final_btn = await self._find_button(
-                page, ["投稿する", "投稿", "公開する", "公開"]
+                page, ["投稿する", "公開する"]
             )
             if not final_btn:
+                # Broader fallback
+                final_btn = await self._find_button(
+                    page, ["投稿", "公開"]
+                )
+            if not final_btn:
+                # Save debug screenshot
+                try:
+                    ss_path = config.DB_PATH.parent / "debug_publish_nobtn.png"
+                    await page.screenshot(path=str(ss_path))
+                    log.warning("Debug screenshot saved: %s", ss_path)
+                except Exception:
+                    pass
                 raise NotePublishError(
                     "投稿ボタンが見つかりませんでした。公開設定UIが変更された可能性があります。"
                 )
@@ -548,13 +561,22 @@ class NoteClient:
             await self._human_delay()
             await final_btn.click()
             await asyncio.sleep(5)
-            log.info("Final publish clicked. URL: %s", page.url)
+            log.warning("Final publish clicked. page_url=%s", page.url)
 
-            # Extract result from PUT response
+            # Wait for navigation/redirect after publish
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Verify publish succeeded by checking page URL and API response
             result["draft_key"] = draft_key
+            current_url = page.url
+            log.warning("Post-publish page URL: %s", current_url)
+
             if publish_response:
                 result["api_response"] = publish_response
-                # Extract user urlname from PUT response to build note URL
                 put_data = publish_response.get("data", {})
                 if isinstance(put_data, dict):
                     data_inner = put_data.get("data", put_data)
@@ -566,10 +588,34 @@ class NoteClient:
                         urlname = config.NOTE_URLNAME
                     result["note_url"] = f"{NOTE_BASE_URL}/{urlname}/n/{key}"
 
+            # If no API response captured, check if page navigated to article URL
             if "note_url" not in result:
-                from boatrace_ai import config
-                fallback_name = config.NOTE_URLNAME
-                result["note_url"] = f"{NOTE_BASE_URL}/{fallback_name}/n/{draft_key}"
+                # After successful publish, note.com redirects to the article page
+                # URL pattern: https://note.com/{urlname}/n/{key}
+                if "/n/" in current_url and "/publish" not in current_url and "/edit" not in current_url:
+                    result["note_url"] = current_url
+                else:
+                    # Publish likely failed — save screenshot for debugging
+                    try:
+                        ss_path = config.DB_PATH.parent / "debug_publish_failed.png"
+                        await page.screenshot(path=str(ss_path))
+                        log.warning("Debug screenshot saved: %s", ss_path)
+                    except Exception:
+                        pass
+                    # Log all visible buttons for debugging
+                    try:
+                        buttons = await page.query_selector_all("button")
+                        btn_texts = []
+                        for btn in buttons:
+                            if await btn.is_visible():
+                                btn_texts.append((await btn.text_content() or "").strip())
+                        log.warning("Visible buttons on page: %s", btn_texts)
+                    except Exception:
+                        pass
+                    raise NotePublishError(
+                        f"投稿が完了しませんでした。ページURL: {current_url} "
+                        f"(APIレスポンス未捕捉、リダイレクトなし)"
+                    )
 
             log.info("Publish complete. note_url=%s", result.get("note_url"))
 

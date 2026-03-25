@@ -46,7 +46,7 @@ NOTE_USER_ID: str = os.environ.get("NOTE_USER_ID", "")
 NOTE_URLNAME: str = os.environ.get("NOTE_URLNAME", "suiri_ai")
 NOTE_ARTICLE_PRICE: int = int(os.environ.get("NOTE_ARTICLE_PRICE", "300"))
 NOTE_MEMBERSHIP_PRICE: int = int(os.environ.get("NOTE_MEMBERSHIP_PRICE", "1000"))
-NOTE_FREE_PERIOD: bool = os.environ.get("NOTE_FREE_PERIOD", "true").lower() == "true"
+NOTE_FREE_PERIOD: bool = os.environ.get("NOTE_FREE_PERIOD", "false").lower() == "true"
 
 _default_session = Path.home() / ".boatrace-ai" / "note_session.json"
 NOTE_SESSION_PATH: Path = Path(os.environ.get("NOTE_SESSION_PATH", str(_default_session)))

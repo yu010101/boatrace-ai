@@ -44,8 +44,9 @@ NOTE_EMAIL: str = os.environ.get("NOTE_EMAIL", "")
 NOTE_PASSWORD: str = os.environ.get("NOTE_PASSWORD", "")
 NOTE_USER_ID: str = os.environ.get("NOTE_USER_ID", "")
 NOTE_URLNAME: str = os.environ.get("NOTE_URLNAME", "suiri_ai")
-NOTE_ARTICLE_PRICE: int = int(os.environ.get("NOTE_ARTICLE_PRICE", "300"))
+NOTE_ARTICLE_PRICE: int = int(os.environ.get("NOTE_ARTICLE_PRICE", "980"))
 NOTE_MEMBERSHIP_PRICE: int = int(os.environ.get("NOTE_MEMBERSHIP_PRICE", "1000"))
+NOTE_WEEKLY_PREMIUM_PRICE: int = int(os.environ.get("NOTE_WEEKLY_PREMIUM_PRICE", "2980"))
 NOTE_FREE_PERIOD: bool = os.environ.get("NOTE_FREE_PERIOD", "false").lower() == "true"
 
 _default_session = Path.home() / ".boatrace-ai" / "note_session.json"
@@ -75,6 +76,11 @@ NOTE_FOLLOW_MAX_PER_DAY: int = int(os.environ.get("NOTE_FOLLOW_MAX_PER_DAY", "5"
 NOTE_FOLLOW_DELAY_MIN: int = int(os.environ.get("NOTE_FOLLOW_DELAY_MIN", "60"))
 NOTE_FOLLOW_DELAY_MAX: int = int(os.environ.get("NOTE_FOLLOW_DELAY_MAX", "180"))
 NOTE_FOLLOW_MAX_TAGS: int = int(os.environ.get("NOTE_FOLLOW_MAX_TAGS", "2"))
+
+# note.com suki (like) settings
+NOTE_SUKI_MAX_PER_DAY: int = int(os.environ.get("NOTE_SUKI_MAX_PER_DAY", "30"))
+NOTE_SUKI_DELAY_MIN: int = int(os.environ.get("NOTE_SUKI_DELAY_MIN", "30"))
+NOTE_SUKI_DELAY_MAX: int = int(os.environ.get("NOTE_SUKI_DELAY_MAX", "90"))
 
 # Google Gemini image generation (optional)
 GOOGLE_API_KEY: str = os.environ.get("GOOGLE_API_KEY", "")

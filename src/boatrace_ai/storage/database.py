@@ -873,6 +873,54 @@ def get_total_follow_count() -> int:
         conn.close()
 
 
+# ── note_suki_log ────────────────────────────────────────
+
+
+def is_already_liked(note_key: str) -> bool:
+    """Check if an article has already been liked."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM note_suki_log WHERE target_note_key = ?",
+            (note_key,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def save_suki_log(
+    note_key: str,
+    title: str = "",
+    creator: str = "",
+    keyword: str = "",
+) -> None:
+    """Record a suki (like) action."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO note_suki_log
+               (target_note_key, target_title, target_creator, source_keyword)
+               VALUES (?, ?, ?, ?)""",
+            (note_key, title, creator, keyword),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_today_suki_count() -> int:
+    """Get number of sukis (likes) made today."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM note_suki_log WHERE liked_at >= date('now')",
+        ).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
 def save_publish_log(article_type: str, title: str, note_url: str | None = None) -> None:
     """Record a note.com publish event for daily cap tracking."""
     conn = _get_connection()

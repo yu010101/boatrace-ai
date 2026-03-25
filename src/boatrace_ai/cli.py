@@ -47,6 +47,7 @@ from boatrace_ai.publish.article import (
     generate_membership_article,
     generate_midday_report,
     generate_track_record_article,
+    generate_weekly_premium_report,
 )
 from boatrace_ai.publish.note_client import NoteClient
 from boatrace_ai.scoring.grader import grade_race
@@ -1440,6 +1441,57 @@ async def _publish_track_record(days: int, dry_run: bool) -> None:
         display_error(f"投稿に失敗: {e}")
 
 
+@publish.command("weekly-premium")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def publish_weekly_premium(dry_run: bool) -> None:
+    """週間プレミアムレポート（有料¥2,980）をnote投稿"""
+    asyncio.run(_publish_weekly_premium(dry_run))
+
+
+async def _publish_weekly_premium(dry_run: bool) -> None:
+    accuracy_trend = get_accuracy_trend(30)
+    roi_trend = get_roi_trend(30)
+    stats = get_stats()
+
+    if not accuracy_trend:
+        display_error("実績データがありません。")
+        return
+
+    related_links = _get_related_links("grades", "results", "track_record")
+    title, html_body, hashtags = generate_weekly_premium_report(
+        accuracy_trend, roi_trend, stats, related_links=related_links,
+    )
+
+    price = config.NOTE_WEEKLY_PREMIUM_PRICE
+
+    if dry_run:
+        console.print(f"\n[bold]タイトル:[/bold] {title}")
+        console.print(f"[bold]価格:[/bold] ¥{price:,}")
+        console.print(html_body)
+        return
+
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
+    try:
+        note_client = NoteClient()
+        with console.status("[bold green]note.com にログイン確認中..."):
+            await note_client.ensure_logged_in()
+        with console.status("[bold green]週間プレミアムレポートを投稿中..."):
+            result = await note_client.create_and_publish(
+                title, html_body, price=price, hashtags=hashtags,
+                eyecatch_title=title, article_type="track_record",
+            )
+        url = result.get("note_url", "")
+        display_publish_result(title, url, price)
+        if url:
+            save_published_article(date.today().isoformat(), "weekly_premium", url, title)
+            save_publish_log("weekly_premium", title, url)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
+
+
 @publish.command("midday")
 @click.argument("date_str", default=None, required=False)
 @click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
@@ -1812,6 +1864,49 @@ def engage_note_follow(dry_run: bool, max_follows: int, tags: str | None) -> Non
 
     except Exception as e:
         display_error(f"note.comフォロー実行に失敗: {e}")
+
+
+@engage.command("note-suki")
+@click.option("--dry-run", is_flag=True, help="スキせず発見記事一覧のみ表示")
+@click.option("--max", "max_likes", default=30, type=int, help="最大スキ数 (default: 30)")
+@click.option("--keywords", default=None, help="カンマ区切りのキーワード (default: 競艇予想,ボートレース,...)")
+def engage_note_suki(dry_run: bool, max_likes: int, keywords: str | None) -> None:
+    """note.com 競艇関連記事に自動スキ"""
+    from boatrace_ai.social.note_suki import execute_note_suki
+
+    keyword_list = keywords.split(",") if keywords else None
+
+    console.print(f"\n[bold]note.com 自動スキ[/bold]")
+    if dry_run:
+        console.print("[yellow]--dry-run モード[/yellow]")
+
+    try:
+        result = asyncio.get_event_loop().run_until_complete(
+            execute_note_suki(
+                max_likes=max_likes,
+                keywords=keyword_list,
+                dry_run=dry_run,
+            )
+        )
+
+        if result.get("already_at_limit"):
+            console.print("[yellow]本日のスキ上限に達しています[/yellow]")
+            return
+
+        console.print(f"\n[bold]結果:[/bold]")
+        console.print(f"  発見記事数: {result['discovered']}")
+        console.print(f"  スキ成功: {result['liked']}")
+        console.print(f"  スキップ: {result['skipped']}")
+
+        if dry_run and result.get("articles"):
+            console.print(f"\n[bold]発見記事:[/bold]")
+            for a in result["articles"]:
+                console.print(
+                    f"  {a['title'][:40]} by @{a['creator']} [keyword: {a['keyword']}]"
+                )
+
+    except Exception as e:
+        display_error(f"note.comスキ実行に失敗: {e}")
 
 
 @engage.command("stats")

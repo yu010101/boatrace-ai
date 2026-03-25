@@ -155,3 +155,14 @@ CREATE TABLE IF NOT EXISTS note_publish_log (
 CREATE INDEX IF NOT EXISTS idx_note_publish_log_date ON note_publish_log(published_at);
 CREATE INDEX IF NOT EXISTS idx_published_articles_type ON published_articles(article_type);
 CREATE INDEX IF NOT EXISTS idx_note_follow_log_urlname ON note_follow_log(target_urlname);
+
+CREATE TABLE IF NOT EXISTS note_suki_log (
+    target_note_key TEXT NOT NULL,
+    target_title TEXT,
+    target_creator TEXT,
+    source_keyword TEXT,
+    liked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(target_note_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_suki_log_key ON note_suki_log(target_note_key);

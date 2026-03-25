@@ -100,6 +100,15 @@ jobs:
         run: boatrace engage note-follow --max 5
         continue-on-error: true
 
+      - name: Like note.com articles (suki)
+        env:
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
+        run: boatrace engage note-suki --max 30
+        continue-on-error: true
+
       - name: Engage with community (morning)
         env:
           TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
@@ -312,6 +321,14 @@ jobs:
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
           NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish track-record
+
+      - name: Publish weekly premium report
+        env:
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
+        run: boatrace publish weekly-premium
 
       - name: Save data cache
         uses: actions/cache/save@v4

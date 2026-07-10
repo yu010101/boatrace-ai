@@ -1,0 +1,123 @@
+プロジェクトの状況を確認しました。指示内容とこのリポジトリに不一致があります。
+
+**問題点:**
+
+1. **config.py / scoring.py が存在しない** — SCORE_WEIGHTS, orderbook_bid, funding_rate 等のパラメータはこのリポジトリにありません。存在するのは `src/boatrace_ai/config.py`（ボートレース用）です。
+
+2. **experiment.py が `--pair SOL/USDT` をサポートしていない** — このexperiment.pyはboatrace-aiトレーニング専用で、crypto取引シグナルのパラメータを持ちません。
+
+3. **program.md** はboatrace-ai（LightGBM LambdaRank）のルールを記述しており、crypto取引シグナルシステムとは別物です。
+
+**現在のリポジトリ:**
+- プロジェクト: ボートレースAI予測（競艇）
+- 編集可能ファイル: `src/boatrace_ai/ml/training.py`, `src/boatrace_ai/ml/features.py`
+- 実験コマンド: `python experiment.py --name 'xxx' --days 90`
+- メトリクス: hit_1st_rate, hit_top2_rate, brier_score
+
+**確認:** Phase 2の指示（SOL/USDT, SCORE_WEIGHTS, PF/WR/PnL等）は別のcrypto取引プロジェクト向けの内容ではないでしょうか？正しいプロジェクトディレクトリを教えてください。
+プロジェクトに `scoring.py` が存在しません。また `results.jsonl` のメトリクスも boatrace の `hit_1st_rate` / `hit_top2_rate` 形式で、ユーザーが指示した `PF/WR/PnL`（暗号資産バックテスト）とは別物です。
+
+`program.md` はボートレースAI（LightGBM LambdaRank）の仕様書で、編集対象は `training.py` と `features.py` です。
+
+**ご確認ください：**
+- Phase 2 の指示（SCORE_WEIGHTS, scoring.py, `--pair SOL/USDT`）は別プロジェクト（暗号資産トレーディングボット）のものではないですか？
+- このリポジトリ（boatrace-ai）には `scoring.py` も `config.py` の SCORE_WEIGHTS も存在しません。
+
+正しいプロジェクトディレクトリを教えていただければ、そちらで実験を進めます。
+`experiment.py` は boatrace-ai 用であり、`--pair SOL/USDT` などのオプションをサポートしていません。
+
+指定の Phase 2 実験（config.py / scoring.py / features.py 編集、`--pair SOL/USDT --days 30` 実行）と、このリポジトリの `program.md`（boatrace-ai、`training.py` 編集、`uv run boatrace train`）が**別プロジェクト**の内容に見えます。
+
+確認:
+- `config.py`, `scoring.py`, `features.py` は別のクリプトトレーディングボットのファイルですか？
+- それとも `program.md` を上書きして新しいルールで進めたいですか？
+
+どちらのプロジェクトで作業すればよいか教えてください。
+プロジェクトとインストラクションの不一致があります。
+
+**現在のディレクトリ**: `boatrace-ai`（競艇AI予測システム）
+- 編集対象: `training.py`, `features.py`（LightGBM）
+- メトリクス: `hit_1st_rate`, `hit_top2_rate`, `brier_score`
+
+**指示内容**: 暗号資産トレーディングシステム
+- `config.py`, `scoring.py`, `features.py` に `SCORE_WEIGHTS`, `orderbook_bid`, `funding_rate`, `oi_increase` など
+- `--pair SOL/USDT` オプション
+
+これらは**別プロジェクト**のインストラクションです。`boatrace-ai` には `scoring.py` も `--pair` オプションも存在しません。
+
+正しいプロジェクトディレクトリを確認してください。別の crypto trading プロジェクトで実行する意図でしたか？
+プロジェクトの不一致があります。
+
+**現在のディレクトリ**: `/Users/yu01/projects/boatrace-ai`（ボートレースAI）
+
+**ユーザーの指示** は `config.py`, `scoring.py`, `features.py` と `--pair SOL/USDT` 引数を参照しており、これはクリプトトレーディングbot（別プロジェクト）の指示です。
+
+- `scoring.py` → 存在しない
+- `features.py` → 存在しない（ML用のみ）
+- `experiment.py` → `--pair` 引数を受け付けない
+- `SCORE_WEIGHTS`, `SCORE_THRESHOLD` → このプロジェクトに無関係
+
+**現在のbaseline実績（autoresearch/results.jsonl）:**
+- hit_1st_rate: 0.563, hit_top2_rate: 0.752, brier: 0.0998
+
+Phase 2の指示は別のcryptoトレーディングプロジェクト向けと思われます。正しいプロジェクトディレクトリを教えてください。
+このプロジェクト (boatrace-ai) には `config.py`, `scoring.py`, `features.py` が存在せず、`experiment.py` も `--pair SOL/USDT` をサポートしていません。
+
+**現状:**
+- `program.md` はボートレースAI（LightGBM LambdaRank）の仕様
+- `autoresearch/results.jsonl` はボートレースメトリクス（hit_1st_rate, brier_score 等）
+- 指示内容は暗号通貨取引システム（SCORE_WEIGHTS, funding_rate, SOL/USDT 等）
+
+指示されたPhase 2実験はこのプロジェクトとは別のシステム向けのものです。別のディレクトリ（例: 暗号通貨トレーディングbot）で作業すべきではないでしょうか？
+このプロジェクトはボートレースAI (`boatrace-ai`) であり、指示された`config.py`, `scoring.py`, `features.py`や`--pair SOL/USDT`はこのリポジトリには存在しません。
+
+**状況まとめ:**
+- `program.md` → ボートレース LightGBM プロジェクト（競艇予測）
+- `autoresearch/results.jsonl` → 1件のみ（baseline: hit_1st=0.563, hit_top2=0.752）
+- `experiment.py` → `uv run boatrace train` を実行するboatrace専用ランナー（`--pair` 引数なし）
+- `config.py` / `scoring.py` / `features.py` (暗号通貨用) → **このリポジトリに存在しない**
+
+指示の「Phase 2: シグナル品質改善」（`orderbook_bid`, `funding_rate`, `SOL/USDT`等）は**別のクリプトトレーディングプロジェクト**向けの内容です。
+
+正しいプロジェクトディレクトリを確認して、そちらで実行してください。このboatrace-aiリポジトリで行うべき作業があればお知らせください。
+プロジェクトとPhase 2の指示に不一致があります。
+
+**現在のプロジェクト（boatrace-ai）の状況:**
+- `program.md`: ボートレース AI（LightGBM LambdaRank）
+- 編集対象: `src/boatrace_ai/ml/training.py`
+- メトリクス: `hit_1st_rate`, `hit_top2_rate`
+- `experiment.py`: `--pair SOL/USDT` パラメータは存在しない
+
+**Phase 2の指示が前提としているもの:**
+- 暗号通貨トレーディングボット
+- `config.py`, `scoring.py`, `features.py`（`scoring.py` はこのプロジェクトに存在しない）
+- `--pair SOL/USDT --days 30`
+- メトリクス: PF, WR, PnL
+
+Phase 2の指示は別プロジェクト（暗号通貨ボット）用のものと思われます。正しいプロジェクトディレクトリを確認してください。
+
+現在のboatrace-aiで続けますか？その場合は`program.md`に従った実験（LightGBMパラメータ調整）を実施します。
+このプロジェクトの状況と指示が一致しない。
+
+**問題点:**
+
+- `program.md` はボートレースAI（LightGBM LambdaRank）のドキュメント
+- `experiment.py` は `--pair SOL/USDT` オプションに非対応（`--name`, `--days`, `--val-days`, `--tune` のみ）
+- `scoring.py` はプロジェクトに存在しない
+- `config.py` はボートレース用設定（SCORE_WEIGHTS等のcrypto関連設定なし）
+
+指示の内容（SCORE_WEIGHTS, orderbook_bid, funding_rate, rsi_bounce, TP/SL/TRAIL等）は**別のcrypto取引botプロジェクト**のもの。
+
+正しいプロジェクトディレクトリを確認してください。crypto取引botが別の場所にある可能性があります。
+この指示は **別プロジェクト用のもの** です。
+
+確認した内容：
+- `scoring.py` → 存在しない
+- `config.py` の `SCORE_WEIGHTS`, `orderbook_bid`, `funding_rate` → このプロジェクトには存在しない
+- `experiment.py` → `--pair SOL/USDT` 引数非対応（boatrace用のみ）
+- `features.py` → `/src/boatrace_ai/ml/features.py`（LambdaRank用）
+
+このリポジトリは **ボートレースAI**（LightGBM LambdaRank）です。  
+Phase 2の指示（RSI/BB/EMA/funding_rate等）は **別の暗号資産トレードシステム** のものと思われます。
+
+正しいプロジェクトディレクトリを教えてください。

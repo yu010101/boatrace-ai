@@ -1,6 +1,6 @@
 #!/bin/bash
 # 週次: モデル再訓練 + ログクリーンアップ
-cd /Users/yu01/projects/boatrace-ai
+cd /Users/apple/projects/boatrace-ai
 source .venv/bin/activate
 
 LOG_DIR=~/.boatrace-ai/logs

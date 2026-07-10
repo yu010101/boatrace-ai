@@ -19,18 +19,20 @@ LGBM_PARAMS: dict = {
     "objective": "lambdarank",
     "metric": "ndcg",
     "eval_at": [1, 3],
-    "num_leaves": 31,
-    "learning_rate": 0.05,
-    "feature_fraction": 0.8,
-    "bagging_fraction": 0.8,
+    "num_leaves": 15,
+    "learning_rate": 0.01,
+    "feature_fraction": 0.9,
+    "bagging_fraction": 0.7,
     "bagging_freq": 5,
-    "min_child_samples": 20,
+    "min_child_samples": 100,
+    "reg_alpha": 0.1,
+    "reg_lambda": 0.1,
     "verbose": -1,
 }
 
 BOATS_PER_RACE = 6
 
-N_ESTIMATORS = 500
+N_ESTIMATORS = 1000
 EARLY_STOPPING_ROUNDS = 50
 SEMAPHORE_LIMIT = 5
 

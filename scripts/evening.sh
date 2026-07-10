@@ -1,6 +1,6 @@
 #!/bin/bash
-# 夜: 結果取得 → 照合 → 回収率 → レポート(dry-run)
-cd /Users/yu01/projects/boatrace-ai
+# 夜: 結果取得 → 照合 → 回収率 → 結果レポート publish
+cd /Users/apple/projects/boatrace-ai
 source .venv/bin/activate
 set -o pipefail
 
@@ -13,6 +13,6 @@ mkdir -p ~/.boatrace-ai/logs
   boatrace results check
   boatrace roi check
   boatrace roi today
-  boatrace publish results --dry-run
+  boatrace publish results || echo "[WARN] results publish failed"
   echo "=== $(date) evening job end ==="
 } >> "$LOG" 2>&1

@@ -1,0 +1,26 @@
+**結果:** `num_leaves=63` → hit_1st_rate: **0.5662** (+0.003), hit_top2_rate: 0.7489 (-0.003), brier: 0.100, ece: 0.0033
+
+1着的中率は僅かに改善したが top2 は微減。ほぼ誤差範囲内の変化。
+**メトリクス:** `min_child_samples_10`: hit_1st=0.5621 / hit_top2=0.7466 → ベースラインより劣化、不採用。現在のベストは `num_leaves_63`（hit_1st=0.5662）。
+**結果:** `learning_rate=0.03` → hit_1st=0.5626, hit_top2=0.7498
+
+baseline比+0.0% (0.563→0.5626)、num_leaves_63 (0.5662) には届かず。現時点のベストは **num_leaves_63: 0.5662**。
+**結果:** `reg_lambda_0.1` → hit_1st=**0.5676**, hit_top2=0.7502, brier=0.0997
+
+新ベスト達成（baseline 0.563 → 0.5676、+0.0046）。L2正則化が過学習抑制に効果あり。
+**reg_alpha_0.1**: hit_1st=0.5671, hit_top2=**0.7525**
+
+hit_top2_rate はベスト（0.7525 > 0.7516）だが、hit_1st_rate は reg_lambda_0.1（0.5676）に僅かに届かず。両正則化の組み合わせが hit_top2 には効いている。
+`feature_fraction_0.7`: **hit_1st=0.5607, hit_top2=0.753**
+
+baseline (0.563) より hit_1st が低下 → feature_fraction=0.7 は逆効果。feature_fraction は 0.8 に戻す。
+**bagging_fraction_0.9**: hit_1st=0.5616, hit_top2=0.7498 — ベースラインより若干改善するが、best(reg_lambda_0.1: 0.5676)には届かず。`bagging_fraction=0.9`は不採用。
+**結果**: `num_leaves_127` → hit_1st=**0.5653** (ベスト比 -0.0023)
+
+num_leaves=127は現状より悪化。63に戻した。ベストは引き続き`reg_lambda_0.1`の0.5676。
+**結果**: `reg_lambda=1.0` → hit_1st=0.5648 (現行最高 0.5676 より -0.003)
+
+reg_lambda は 0.1 がスイートスポット。L2正則化を強めても改善しない。
+**結果:** `n_estimators_1000` → hit_1st_rate: **0.5616** / hit_top2_rate: 0.7498（ベスト `reg_lambda_0.1=0.5676` 比 -0.006、改善なし）
+
+Early Stoppingで同程度の反復数に収束した模様。現在のベストは `reg_lambda_0.1` の **0.5676**。

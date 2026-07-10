@@ -1,0 +1,9 @@
+**結果:** `learning_rate_0.01` — hit_1st=**0.5709** (全実験中ベスト、前ベスト比+0.0033), hit_top2=0.7407 (やや低下), brier=0.1006, ece=0.0041、実行時間136s
+
+1着的中率が過去最高を更新。ただし hit_top2 はやや後退しており、低LRが1着予測の精度集中に寄与した可能性あり。
+**結果:** `min_child_samples_50` → hit_1st_rate=**0.5704**, hit_top2_rate=0.7387, brier=0.1008, ece=0.0047
+
+ベストの `learning_rate_0.01`（0.5709）にほぼ並ぶが、hit_top2_rate は現状で最低（0.7387）。`min_child_samples=50` は hit_1st に有効だが top2 を犠牲にする傾向あり。次の候補は `--days 180`（学習データ増量）または `reg_alpha=1.0`（L1強化）。
+**`feature_fraction=0.9`**: hit_1st=**0.5719** (新ベスト), brier=0.1005, ece=**0.003**（最低値）
+
+前回ベスト 0.5709 (learning_rate_0.01) を更新。reg_alpha/lambda/min_child_samples の正則化が既に効いている状態で特徴量比率を上げたことで、モデルの表現力が適切に回復した。

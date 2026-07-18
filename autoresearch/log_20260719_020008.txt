@@ -1,0 +1,2 @@
+Failed to authenticate. API Error: 401 OAuth access token has been revoked.
+SessionEnd hook [$HOME/.claude/hooks/ticket-on-session-end.sh] failed: Hook cancelled

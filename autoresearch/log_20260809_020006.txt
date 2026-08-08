@@ -1,0 +1,7 @@
+I'll just wait for the background bash task to notify me when it finishes — no need to poll manually.実験完了。結果は以下の通り:
+
+**min_child_samples_300**: hit_1st_rate=0.5801, hit_top2_rate=0.7521, brier=0.0965, ece=0.0054（524.4s）
+
+前回の min_child_samples_100（hit_1st_rate=0.588、これまでの最良値）と比較すると、300ではやや悪化（0.5801）。過去の実験を含めると、min_child_samples は100付近が最適で、それ以上に増やすと性能が下がる傾向が確認できた（10→0.5621, 50→0.5704, 100→0.588, 300→0.5801）。次回は min_child_samples を100前後（例: 150や80）で微調整する方向が有望と考えられる。実験完了。`learning_rate: 0.01 → 0.05` (min_child_samples=300 は前回実験から継続)。
+
+**結果: hit_1st_rate=0.5782, hit_top2_rate=0.7521, brier=0.0967, ece=0.0034**（直前の min_child_samples_300 実験の hit_1st_rate=0.5801 よりわずかに低下、ece は改善）

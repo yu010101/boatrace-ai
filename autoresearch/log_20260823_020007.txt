@@ -1,0 +1,5 @@
+Bash の run_in_background で既にジョブが動いているので、そのまま完了通知を待つ。ポーリングはしない。I'll wait for the background experiment task to finish naturally (it runs training + logs results) and report the metrics once it completes.実験完了。`feature_fraction: 0.9 → 0.6` に変更して実行した結果:
+
+**hit_1st_rate: 0.5545, hit_top2_rate: 0.7533, brier_score: 0.1008, ece: 0.0048**（num_races=2229, 204.2s）
+
+baseline(0.563)やfeature_fraction_0.9(0.5719)を下回り、feature_fraction=0.6は改善せず。現状の最良は `num_leaves_15`/`min_child_samples_100`/`reg_lambda_0.01` あたり(hit_1st≈0.586-0.588)。training.pyは変更したまま(uncommitted)。

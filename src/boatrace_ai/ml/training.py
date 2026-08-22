@@ -21,7 +21,7 @@ LGBM_PARAMS: dict = {
     "eval_at": [1, 3],
     "num_leaves": 15,
     "learning_rate": 0.1,
-    "feature_fraction": 0.9,
+    "feature_fraction": 0.6,
     "bagging_fraction": 0.8,
     "bagging_freq": 5,
     "min_child_samples": 5,

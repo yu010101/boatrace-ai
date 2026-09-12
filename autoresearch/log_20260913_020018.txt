@@ -1,0 +1,9 @@
+Experiment completed successfully in 46.1s (well under the timeout that killed the last two runs).
+
+**結果**: `feature_fraction: 0.6 → 0.5` — hit_1st_rate=0.5656, hit_top2_rate=0.7523, brier=0.0998, ece=0.0040 (46.1s)。前回のベスト(min_child_samples_100: hit_1st=0.588)には及ばないが、直前のfeature_fraction_0.6(0.5545)より改善。実験完了。`reg_lambda: 0.1 → 10.0` に変更（training.py 1箇所のみ）。
+
+**結果**: hit_1st_rate=0.5656, hit_top2_rate=0.7523, brier=0.0998, ece=0.004（num_races=2196, 43.7s）
+
+前回の feature_fraction_0.5 実験と全く同じ metrics になった。これは今日データ（num_races=2196）が同一で、reg_lambda=10.0 の効果が feature_fraction=0.5 のときの結果と偶然一致したか、もしくは正則化が強すぎて学習が早期停止し似た木構造に収束した可能性が高い。過去最良は `reg_lambda_0.01`（hit_1st=0.5864, num_leaves=15と組み合わせ時）で、reg_lambda を上げる方向は有望ではないことが確認された。実験完了。`num_leaves=15→63`（既存グリッド探索の空白点、実際は2026-03-23に一度実施済みだったが今回は最新データで再検証）を`src/boatrace_ai/ml/training.py`の1箇所のみ変更し、`python experiment.py --name "num_leaves_63"`で実行。
+
+**結果**: `hit_1st_rate=0.5656, hit_top2_rate=0.7523, brier=0.0998, ece=0.0040`（baseline 0.563 比 +0.0026、直近のbaseline相当パラメータ群とほぼ同値で改善効果は限定的）

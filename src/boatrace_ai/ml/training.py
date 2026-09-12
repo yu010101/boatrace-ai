@@ -19,7 +19,7 @@ LGBM_PARAMS: dict = {
     "objective": "lambdarank",
     "metric": "ndcg",
     "eval_at": [1, 3],
-    "num_leaves": 15,
+    "num_leaves": 63,
     "learning_rate": 0.1,
     "feature_fraction": 0.6,
     "bagging_fraction": 0.8,

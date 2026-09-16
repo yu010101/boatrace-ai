@@ -172,7 +172,7 @@ def generate_bets_ev(
                 ))
 
     # ── Exacta (2連単) ──
-    if odds_exacta:
+    if False:  # 2026-09-16 実測で無効化: 2連単は投下¥23,650,700でROI -22.8%。較正でも救えず(検証期間 -27.5%→EV>0.2に絞ると -30.0%)。再開条件=レース前生成データで検証ROIが正のとき
         # Check top predicted exacta combinations
         for a, b in [(first, second), (first, third), (second, first), (second, third)]:
             key = f"{a}-{b}"

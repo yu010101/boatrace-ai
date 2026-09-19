@@ -1,0 +1,7 @@
+実験完了。`feature_fraction: 0.6 → 0.8` (training.py:24) の1箇所変更のみ実施。
+
+**結果**: hit_1st_rate=0.575, hit_top2_rate=0.7505, brier=0.0976, ece=0.0035（num_races=2160, 113.9s）
+
+baseline(0.6, hit_1st=0.5545 直近同条件)よりやや改善したが、過去最良(num_leaves_31/min_child_samples_100系の0.58台)には及ばない。過去実験は同一条件でも日によってばらつきが大きい(データ期間・レース数が変動するため)点に留意。Experiment complete: `EARLY_STOPPING_ROUNDS` 50→100 (single edit in `src/boatrace_ai/ml/training.py:36`).
+
+**Result:** `early_stopping_rounds_100` → hit_1st_rate=0.5764, hit_top2_rate=0.7514, brier=0.0978, ece=0.0023 (110.0s) — improves ece notably vs. the current feature_fraction_0.8 baseline (0.575/0.0035) but doesn't beat the best-so-far `num_leaves_15`/`reg_lambda_0.01`/`min_child_samples_100` runs (~0.586–0.588 hit_1st).`reg_alpha: 1.0 → 0.0` (L1正則化を除去): hit_1st_rate=0.5704, hit_top2_rate=0.7546, brier=0.098, ece=0.0061 — baseline(0.563)より改善したが、reg_alpha_0.1(0.5671)やmin_child_samples_100(0.588)ほどの効果はなし。過去最良は `min_child_samples_100` (hit_1st=0.588) と `num_leaves_15` (0.5876)。

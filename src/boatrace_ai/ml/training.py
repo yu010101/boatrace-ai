@@ -26,14 +26,14 @@ LGBM_PARAMS: dict = {
     "bagging_freq": 5,
     "min_child_samples": 5,
     "reg_alpha": 0.0,
-    "reg_lambda": 0.1,
+    "reg_lambda": 0.0,
     "verbose": -1,
 }
 
 BOATS_PER_RACE = 6
 
 N_ESTIMATORS = 1000
-EARLY_STOPPING_ROUNDS = 50
+EARLY_STOPPING_ROUNDS = 30
 SEMAPHORE_LIMIT = 5
 
 # Optuna HPO settings

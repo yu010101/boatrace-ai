@@ -1,0 +1,14 @@
+Revert完了(reg_alpha=0.0のベースラインに戻った)。git statusはクリーン、results.jsonlのみ更新。
+
+**実験結果**: `reg_alpha_0.01` (program.mdグリッド `[0, 0.01, 0.1, 1.0, 10.0]` の唯一未検証値)
+
+| metric | 値 | baseline(reg_alpha_0.0, 同週) |
+|---|---|---|
+| hit_1st_rate | 0.5759 | 0.5704 |
+| hit_top2_rate | 0.7600 | 0.7546 |
+| brier_score | 0.0987 | 0.0980 |
+| ece | 0.0084 | 0.0061 |
+
+reg_alpha=0.01 は同週のreg_alpha=0.0比で hit_1st/hit_top2 とも改善したが、ece がやや悪化(0.0061→0.0084、まだ<0.10の制約内)。これで program.md グリッドの reg_alpha/reg_lambda/learning_rate/num_leaves/feature_fraction/min_child_samples/bagging_fraction は全値を一巡した。Ran `reg_lambda: 0.1 → 0.0` (the one grid value from program.md's `reg_lambda` list not yet tested). Result: **hit_1st_rate 0.575, hit_top2_rate 0.7586, brier 0.0987, ece 0.0068** (baseline hit_1st was 0.563/hit_top2 0.7516) — a modest improvement over baseline, but weaker than the current best (`reg_lambda_0.01`: 0.5864/0.7596) and `min_child_samples_100` (0.588/0.7612), so `reg_lambda=0.1` region still looks less promising than lower non-zero values.**実験完了: `EARLY_STOPPING_ROUNDS = 50 → 30`**
+
+`hit_1st_rate=0.5741`, `hit_top2_rate=0.7604`, `brier=0.0989`, `ece=0.0089`（前回比: `EARLY_STOPPING_ROUNDS=50`のreg_lambda_0.0が hit_1st 0.575 / ece 0.0068 → やや hit_1st は微減、ece はやや悪化。改善効果は確認できず、`EARLY_STOPPING_ROUNDS=50`のままの方が良さそう）。

@@ -23,7 +23,7 @@ LGBM_PARAMS: dict = {
     "learning_rate": 0.1,
     "feature_fraction": 0.6,
     "bagging_fraction": 0.8,
-    "bagging_freq": 5,
+    "bagging_freq": 50,
     "min_child_samples": 5,
     "reg_alpha": 0.0,
     "reg_lambda": 0.0,

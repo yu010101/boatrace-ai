@@ -1,0 +1,5 @@
+`bagging_freq: 5 → 10` の実験完了。
+
+**結果**: hit_1st_rate=0.5863, hit_top2_rate=0.759, brier=0.0973, ece=0.008（直前の `early_stopping_rounds_30` 0.5741 比で +1.2pt、直近10件の中で2番目に高い値）。**bagging_freq: 10 → 20** に変更して実験。結果: hit_1st_rate **0.5877**（前回bagging_freq_10の0.5863からさらに改善、全41実験中トップタイのnum_leaves_15=0.5876を上回る最高値）、hit_top2_rate 0.7548、brier 0.0968、ece 0.0077。bagging_freqを上げる方向の改善傾向が継続しており、次はさらに高い値（例: 30）を試す余地あり。bagging_freq=50: hit_1st_rate=0.5845, hit_top2_rate=0.7576, brier=0.0972, ece=0.008（55.9秒）
+
+bagging_freq=20(0.5877)より低下し、10(0.5863)も下回った。bagging_freq=20付近がピークで、50では過学習方向に振れた可能性。次回は10〜20の間（例: bagging_freq=15）を試す価値あり。

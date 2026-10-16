@@ -1,0 +1,10 @@
+module.exports={apps:[{
+ name:'boatrace-live-v4',
+ script:'/Users/radineer01/projects/boatrace-ai/live_v4/live/runner.py',
+ interpreter:'/Users/radineer01/kyotei-exp/.venv/bin/python',
+ cwd:'/Users/radineer01/projects/boatrace-ai/live_v4',
+ autorestart:true,restart_delay:60000,max_restarts:5,min_uptime:60000,
+ env:{TZ:'Asia/Tokyo',PYTHONUNBUFFERED:'1',OMP_NUM_THREADS:'2'},
+ out_file:'/Users/radineer01/projects/boatrace-ai/live_v4/live/state/worker.log',
+ error_file:'/Users/radineer01/projects/boatrace-ai/live_v4/live/state/worker.err',time:true
+}]};

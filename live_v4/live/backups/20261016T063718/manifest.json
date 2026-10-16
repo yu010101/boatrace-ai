@@ -1,0 +1,58 @@
+{
+  "source": "/Users/radineer01/.boatrace-ai/boatrace.db",
+  "backup": "/Users/radineer01/kyotei-exp/live-v4-stage/live/backups/20261016T063718/boatrace.db",
+  "counts": {
+    "predictions": 20285,
+    "results": 22523,
+    "accuracy_log": 18925,
+    "race_grades": 20287,
+    "virtual_bets": 19156,
+    "tweet_log": 0,
+    "race_odds": 18714,
+    "published_articles": 128,
+    "engagement_log": 0,
+    "note_follow_log": 0,
+    "note_publish_log": 128,
+    "note_suki_log": 0
+  },
+  "verified_counts": {
+    "predictions": 20285,
+    "results": 22523,
+    "accuracy_log": 18925,
+    "race_grades": 20287,
+    "virtual_bets": 19156,
+    "tweet_log": 0,
+    "race_odds": 18714,
+    "published_articles": 128,
+    "engagement_log": 0,
+    "note_follow_log": 0,
+    "note_publish_log": 128,
+    "note_suki_log": 0
+  },
+  "files": {
+    "model.calibrator.pkl": {
+      "bytes": 1982,
+      "sha256": "06ee81f38caa8a6d396e6749a5cb96088b3c9929bc94253dad6eedbbf5aab2fe"
+    },
+    "boatrace.db": {
+      "bytes": 108290048,
+      "sha256": "4606e09ef59b27af3b222760b93ed4e0beb911653ba97efe8dd6a510a5dbc8b0"
+    },
+    "model.meta.json": {
+      "bytes": 739,
+      "sha256": "3d1d57e3ef182d7e710fd096fd8b91a564710641e4d4ff0fbe535b083207f1e6"
+    },
+    "boatrace.db-wal": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "boatrace.db-shm": {
+      "bytes": 32768,
+      "sha256": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb"
+    },
+    "model.lgb": {
+      "bytes": 32765,
+      "sha256": "70f2b32f91711d920d1a1906fa9a6c08fdab725f4970d0bae9dd0a97bb874acb"
+    }
+  }
+}

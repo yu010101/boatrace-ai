@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "boats": 936,
+  "races": 156,
+  "columns": 99,
+  "changed_courses": 66,
+  "second_starts": 356,
+  "max_probability_diff": 0.0,
+  "seconds": 209.97746641700002
+}

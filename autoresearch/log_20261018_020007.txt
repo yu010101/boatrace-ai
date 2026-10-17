@@ -1,0 +1,5 @@
+`min_child_samples_150`: hit_1st_rate=0.5674, hit_top2_rate=0.7388, brier=0.0988, ece=0.0025 (n=2136レース) — min_child_samples=5からの変更。100(0.588)より明確に悪化し、300(0.5801)より低いが20(0.5614)・50(0.5704)の帯に近い結果。100近傍がピークである可能性が強まった(ノイズはあるが単調な谷なし)。次回は100周辺(80〜120)を絞る価値あり。**実験結果: `bagging_freq=15`** (5→15に変更、training.py 1箇所)
+
+`hit_1st_rate=0.5693, hit_top2_rate=0.7444, brier=0.0985, ece=0.0046`（num_races=2136, 92.7s）
+
+同じ `min_child_samples=150` が今日の直近実験から残っているため、`bagging_freq=10`(0.5863)・`20`(0.5877) より低い値。ただし比較対象が同日データではなく日々変動するライブ90日ウィンドウのため、単純比較は注意が必要。次候補: `min_child_samples` を150から以前の良好値(100)に戻した上で `bagging_freq` を再検証、または未試行の `early_stopping_rounds=50` を試す。`early_stopping_rounds_50`: hit_1st_rate=0.5688, hit_top2_rate=0.7430, brier=0.0987, ece=0.0032（直前2回の今日の実験 min_child_samples_150=0.5674 / bagging_freq_15=0.5693 と同水準、改善なし）。

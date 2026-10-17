@@ -54,6 +54,8 @@ class Predictor:
     def build(self,today,reference=False):
         assert (today.date==self.day).all()
         today=today.copy(); today[RESULT_COLS]=np.nan
+        # 当日表は直前情報を空欄(None)で読み、1レースずつ値を入れるので object 型になる。履歴と同じ数値型にそろえる
+        for col in today.columns.difference(['date','closed_at','title','name']): today[col]=pd.to_numeric(today[col],errors='coerce')
         raw=pd.concat([self.history,today],ignore_index=True)
         start=time.monotonic()
         f4._trueskill=self.original if reference else self.cached_ts

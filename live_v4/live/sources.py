@@ -75,7 +75,7 @@ def parse_preview(html,day,race_no,stadium=2):
     if sorted(x['pv_course'] for x in rows.values())!=list(range(1,7)): raise ValueError('invalid courses')
     return rows,deadline
 
-def parse_win_odds(html,day=None,stadium=None,race_no=None,live=False):
+def parse_win_odds(html,day=None,stadium=None,race_no=None,live=False,unbet=None):
     s=BeautifulSoup(html,'html.parser')
     if day is not None: identity(s,day,stadium,race_no)
     if live and any(x in s.get_text() for x in ['締切時オッズ','最終オッズ','発売中止','発売終了']): raise ValueError('closed/final odds')
@@ -87,5 +87,7 @@ def parse_win_odds(html,day=None,stadium=None,race_no=None,live=False):
         if len(cells)>=3:
             b=number(cells[0].get_text()); v=number(cells[2].get_text())
             if b in range(1,7) and v and v>=1: out[int(b)]=v
-    if set(out)!=set(range(1,7)): raise ValueError('incomplete six-boat win odds')
+            # 発売中に 0.0 と出る艇はまだ1票も入っていない。unbet を渡されたときだけ「オッズなし」として記録し、他の艇は使う
+            elif b in range(1,7) and v==0 and unbet is not None: unbet.append(int(b))
+    if set(out)|set(unbet or [])!=set(range(1,7)) or not out: raise ValueError('incomplete six-boat win odds')
     return out

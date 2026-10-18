@@ -205,11 +205,11 @@ class Worker:
                 if not deadline_ok(end,[self.program_source,preview_source]):raise ValueError('late feature computation')
                 # Odds captured after inference, close to commit, never substituted with final payouts.
                 html,odds_source=fetch(f'https://www.boatrace.jp/owpc/pc/race/oddstf?rno={r}&jcd={st:02d}&hd={self.day:%Y%m%d}')
-                odds=parse_win_odds(html.decode('utf-8'),str(self.day),st,r,live=True)
+                unbet=[];odds=parse_win_odds(html.decode('utf-8'),str(self.day),st,r,live=True,unbet=unbet)
                 rows=frame[(frame.st==st)&(frame.r==r)]
                 p={str(int(x.boat)):float(x.p) for x in rows.itertuples()};inv={str(k):1/v for k,v in odds.items()};total=sum(inv.values())
                 record=dict(day=str(self.day),st=st,r=r,deadline=end,sources=[self.program_source,preview_source,odds_source],
-                    probabilities=p,win_odds=odds,market_probabilities={k:v/total for k,v in inv.items()},
+                    probabilities=p,win_odds=odds,win_odds_unbet=[str(b) for b in unbet],market_probabilities=None if unbet else {k:v/total for k,v in inv.items()},
                     model_sha256=digest((self.modeldir/'manifest.json').read_bytes()),model='COMBINED+TrueSkill+course',
                     feature_values=json.loads(rows[['boat']+self.predictor.cols].loc[:,lambda x:~x.columns.duplicated()].to_json(orient='records')),
                     source_mode='pre_deadline',history_cutoff=str(self.day-dt.timedelta(days=1)))

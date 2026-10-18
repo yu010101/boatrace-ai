@@ -20,6 +20,10 @@ class LiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):parse_preview('<html/>','2026-10-15',12)
         with self.assertRaises(ValueError):parse_preview((f/'beforeinfo_02.txt').read_text(),'2026-10-16',12,2)
         with self.assertRaises(ValueError):parse_win_odds((f/'oddstf_02.txt').read_text(),'2026-10-15',2,12,live=True)
+        # 2026-10-18 芦屋2R 締切4分前: 5号艇が 0.0(票なし)。unbet を渡せば5艇で使い、渡さなければ従来どおり止める
+        html=(f/'oddstf_unbet_21_2.txt').read_text();unbet=[]
+        self.assertEqual(parse_win_odds(html,'2026-10-18',21,2,live=True,unbet=unbet),{1:1.0,2:6.4,3:25.8,4:5.7,6:25.8});self.assertEqual(unbet,[5])
+        with self.assertRaises(ValueError):parse_win_odds(html,'2026-10-18',21,2,live=True)
     def record(self):
         return dict(day='2026-10-16',st=2,r=1,deadline='2026-10-16T12:00:00+09:00',sources=[{'finished':'2026-10-16T11:55:00+09:00'}],probabilities={str(i):1/6 for i in range(1,7)},model_sha256='test')
     def test_deadline_boundary_and_future_fetch(self):

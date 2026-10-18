@@ -16,7 +16,8 @@ def verify(row):
         assert x['deadline']==row['deadline'] and x['forecast_persisted_at']==row['forecast_persisted_at']
         assert saved.date()==end.date() and saved<end-dt.timedelta(seconds=60)
         probs=x['probabilities'];odds=x['win_odds']
-        assert set(probs)==set('123456') and set(odds)==set('123456')
+        unbet=x.get('win_odds_unbet',[])
+        assert set(probs)==set('123456') and odds and not set(odds)&set(unbet) and set(odds)|set(unbet)==set('123456')
         assert all(isinstance(v,(int,float)) and math.isfinite(v) and 0<v<1 for v in probs.values())
         assert abs(sum(probs.values())-1)<1e-8
         assert all(isinstance(v,(int,float)) and math.isfinite(v) and v>=1 for v in odds.values())

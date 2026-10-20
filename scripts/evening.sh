@@ -25,6 +25,7 @@ mkdir -p ~/.boatrace-ai/logs
   boatrace results check
   boatrace roi check
   boatrace roi today
-# [PAUSED 2026-09-16 ユーザー指示: 外部投稿を停止]   boatrace publish results || echo "[WARN] results publish failed"
+  # 2026-10-20 本人「無料記事だけ再開」
+  boatrace publish results || echo "[WARN] results publish failed"
   echo "=== $(date) evening job end ==="
 } >> "$LOG" 2>&1

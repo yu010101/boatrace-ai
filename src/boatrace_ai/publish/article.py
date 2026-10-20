@@ -32,8 +32,8 @@ _ABOUT_SUIRI_AI_STATIC = (
     "LightGBMと独自の特徴量エンジニアリングにより、選手・モーター・コース・展示データを"
     "総合的にスコアリング。</p>"
     "<ul>"
-    "<li>全履歴公開 … <strong>勝ちも負けも改ざんなく公開</strong></li>"
-    "<li>完全自動 … <strong>予測→結果→検証を365日毎日</strong></li>"
+    "<li>結果の公開 … <strong>勝ちも負けも同じ基準で集計し、結果の記事で公開</strong></li>"
+    "<li>自動運用 … <strong>予測→結果→検証を自動で実行</strong></li>"
     "</ul>"
     "<p>予測だけでなく「結果が正しかったか」まで毎日証明するAI予想です。</p>"
 )
@@ -56,16 +56,16 @@ def _build_about_section(stats: dict | None = None) -> str:
             f"<li>累計分析 … <strong>{stats['total_races']:,}レース以上</strong></li>"
         )
     try:
-        from boatrace_ai.storage.database import get_operation_days
-        days = get_operation_days()
+        from boatrace_ai.storage.database import get_prediction_days
+        days = get_prediction_days()
         if days > 0:
             items.append(
-                f"<li>連続運用 … <strong>{days}日目</strong>（毎日自動運用）</li>"
+                f"<li>分析した日数 … <strong>{days}日</strong>（2026年3月から）</li>"
             )
     except Exception:
         pass
     items.append(
-        "<li>全履歴公開 … <strong>勝ちも負けも改ざんなく公開</strong></li>"
+        "<li>結果の公開 … <strong>勝ちも負けも同じ基準で集計し、結果の記事で公開</strong></li>"
     )
     if items:
         parts.append(f"<ul>{''.join(items)}</ul>")
@@ -516,7 +516,7 @@ def _build_markdown(
     lines.append(order_str)
     lines.append("")
     lines.append("### 水理AIとは")
-    lines.append("ボートレース全場・全レースを毎朝自動分析するAI予測サービス。的中率・ROIは改ざんなく公開。")
+    lines.append("ボートレース全場・全レースを毎朝自動分析するAI予測サービス。的中率・回収率は結果の記事で公開。")
     lines.append("")
     lines.append("### 注意事項")
     lines.append(DISCLAIMER)
@@ -907,7 +907,7 @@ def _build_accuracy_html(
     )
     parts.append(
         "<p>フォローしておくと、朝イチでSランクレースをチェックできます。"
-        "予測→結果→検証を<strong>365日毎日</strong>自動で回し続けるAI予想です。</p>"
+        "予測→結果→検証を<strong>自動で</strong>回し続けるAI予想です。</p>"
     )
 
     # ━━━━ Sランク誘導 ━━━━
@@ -1015,7 +1015,7 @@ def _build_accuracy_markdown(
     )
     lines.append("")
     lines.append("### 水理AIとは")
-    lines.append("ボートレース全場・全レースを毎朝自動分析するAI予測サービス。的中率・ROIは改ざんなく公開。")
+    lines.append("ボートレース全場・全レースを毎朝自動分析するAI予測サービス。的中率・回収率は結果の記事で公開。")
     lines.append("")
     lines.append("### 注意事項")
     lines.append(DISCLAIMER)
@@ -1855,7 +1855,7 @@ def generate_midday_report(
     )
     parts.append(
         "<p>フォローしておくと、毎朝7:30にAI予測が届きます。"
-        "予測→結果→検証を<strong>365日毎日</strong>自動で回し続けるAI予想です。</p>"
+        "予測→結果→検証を<strong>自動で</strong>回し続けるAI予想です。</p>"
     )
 
     # Premium CTA
@@ -2026,7 +2026,7 @@ def generate_hit_flash_article(
     )
     parts.append(
         "<p>水理AIは全場・全レースを毎日自動分析。"
-        "予測→結果→検証を365日毎日公開しています。</p>"
+        "予測と結果を記事で公開しています。</p>"
     )
 
     # Premium CTA

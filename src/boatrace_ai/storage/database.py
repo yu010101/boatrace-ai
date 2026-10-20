@@ -604,6 +604,17 @@ def get_latest_article(article_type: str) -> dict | None:
         conn.close()
 
 
+def get_prediction_days() -> int:
+    """予測を記録した日の数（日付の重複なし）。経過日数ではなく、実際に分析した日だけを数える。
+    2026-10-20: 記事の「連続運用 N日目」が初日からの経過日数（233）で、実際の分析日（136）と食い違っていたため追加"""
+    conn = _get_connection()
+    try:
+        row = conn.execute("SELECT COUNT(DISTINCT race_date) AS n FROM predictions").fetchone()
+        return int(row["n"]) if row and row["n"] else 0
+    finally:
+        conn.close()
+
+
 def get_operation_days() -> int:
     """Get number of days since first prediction was recorded."""
     conn = _get_connection()

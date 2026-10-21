@@ -83,19 +83,21 @@ async def _closed(race_date: str) -> dict | None:
     return m
 
 
-async def month_ledger(upto: str) -> list[tuple[str, int]]:
-    """その月の1日から upto までの、締切前に保存した仮想購入の差引（日ごと）。仮想購入の無い日は飛ばす"""
+async def month_ledger(upto: str) -> list[tuple[str, int, int]]:
+    """その月の1日から upto までの、締切前に保存した予想の (日付, 本命が1着だった数, レース数)。
+    2026-10-21 本人OK: 答え合わせ帳は仮想購入の差引ではなく本命の的中率で見せる（差引は旧い買い方で今月 −43万円。新しい買い方は 10/18〜11/14 の本番テスト中）"""
+    from boatrace_ai.storage.database import get_accuracy_for_date
     d0 = date.fromisoformat(upto).replace(day=1)
     rows = []
     d = d0
     while d.isoformat() <= upto:
-        bets = _judged_bets(d.isoformat())
-        if bets:
+        recs = get_accuracy_for_date(d.isoformat())
+        if recs:
             close = await _closed(d.isoformat())
             if close is not None:
-                roi, _ = DL.roi_before_deadline(bets, close)
-                if roi["total_bets"]:
-                    rows.append((f"{d.month}/{d.day}", roi["total_payout"] - roi["total_invested"]))
+                keep, _ = DL.split_records(recs, _made_at(d.isoformat()), close)
+                if keep:
+                    rows.append((f"{d.month}/{d.day}", sum(1 for r in keep if r["hit_1st"]), len(keep)))
         d += timedelta(days=1)
     return rows
 
@@ -145,7 +147,7 @@ async def build_grades(race_date: str, grades: list[dict], predictions: dict, ge
     pngs = {
         "cover": await V.render(V.cover_html(**A.grades_cover_spec(race_date, grades, top, A.yesterday_line(yesterday))), "cover"),
         "picks": await V.render(V.picks_html(top, f"{dot} ／ %は本命が1着になる見込み。約束ではありません"), "picks") if top else None,
-        "ledger": await V.render(V.ledger_html(ledger, f"〜{yday.replace('-', '.')} ／ 締切前に保存した仮想購入だけ。実際に買った舟券ではありません"), "ledger") if ledger else None,
+        "ledger": await V.render(V.ledger_html(ledger, f"〜{yday.replace('-', '.')} ／ 締切前に保存した予想だけ。本命＝1着になる見込みがいちばん高い艇"), "ledger") if ledger else None,
     }
     return {"pngs": pngs, "make": lambda images: A.generate_rin_grades_article(race_date, grades, predictions, yesterday=yesterday, images=images, excluded=excluded, top=top)}
 
@@ -164,7 +166,7 @@ async def build_results(race_date: str, records: list[dict], roi: dict, grades: 
         lines = [("仮想購入", f"{roi.get('total_bets', 0)}点", V.yen(inv)), ("うち的中", f"{roi.get('hit_count', 0)}点", V.yen(pay))]
         pngs["money"] = await V.render(V.money_html("01 ／ 仮想購入の収支", ["当たった買い目も、", "外れた買い目も足す。"], inv, pay, lines, f"{dot} ／ 実際に買った舟券ではありません"), "money")
     if ledger:
-        pngs["ledger"] = await V.render(V.ledger_html(ledger, f"〜{dot} ／ 締切前に保存した仮想購入だけ。実際に買った舟券ではありません"), "ledger")
+        pngs["ledger"] = await V.render(V.ledger_html(ledger, f"〜{dot} ／ 締切前に保存した予想だけ。本命＝1着になる見込みがいちばん高い艇"), "ledger")
     rows = A.grade_hit_rows(grades, records)
     if rows:
         pngs["grades"] = await V.render(V.grade_hits_html("02 ／ 推奨度ごとの答え合わせ", ["本命が1着だった数"], rows, f"{dot} ／ 予想と結果がそろったレース"), "grades")

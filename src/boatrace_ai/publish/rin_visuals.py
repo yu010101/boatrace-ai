@@ -159,23 +159,22 @@ def picks_html(top: list[dict], foot: str) -> str:
     )
 
 
-def ledger_html(rows: list[tuple[str, int]], foot: str) -> str:
-    """今月の答え合わせ帳。rows は (日付 "10/20", その日の差引)。棒は累計の差引"""
-    cum, acc = [], 0
-    for d, net in rows:
-        acc += net
-        cum.append((d, acc))
-    top = max([abs(v) for _, v in cum] + [1])
+def ledger_html(rows: list[tuple[str, int, int]], foot: str) -> str:
+    """今月の答え合わせ帳。rows は (日付 "10/20", 本命が1着だった数, レース数)。棒は日ごとの的中率、見出しは今月の累計"""
+    hit = sum(h for _, h, _ in rows)
+    n = sum(c for _, _, c in rows)
+    rate = round(hit / n * 100) if n else 0
     cols = []
-    for d, v in cum:
-        h = abs(v) / top * 46
-        pos = f"bottom:50%;height:{h:.1f}%" if v >= 0 else f"top:50%;height:{h:.1f}%"
-        cols.append(f'<div class="lcol"><div class="lbar {"plus" if v >= 0 else "minus"}" style="{pos}"></div><div class="lday">{_e(d.split("/")[1])}</div></div>')
-    total = cum[-1][1] if cum else 0
-    cls = "minus" if total < 0 else "teal"
-    sign = "−" if total < 0 else "+"
+    for d, h, c in rows:
+        pct = h / c * 100 if c else 0
+        cols.append(
+            f'<div class="lcol"><div class="lpct">{round(pct)}</div>'
+            f'<div class="lbar plus" style="bottom:0;height:{pct * 0.82:.1f}%"></div><div class="lday">{_e(d.split("/")[1])}</div></div>'
+        )
+    css = _PICK_CSS + ".ledger{align-items:flex-end;height:380px}.lpct{position:absolute;width:100%;text-align:center;font-size:20px;color:#536968;top:0}"
     return (
-        f'<style>{_PICK_CSS}</style><section class="asset"><small>今月の答え合わせ帳</small>'
-        f'<h2 style="margin-top:20px">仮想購入の差引、今月の累計は <strong class="{cls}">{sign}{abs(total):,}円</strong></h2>'
+        f'<style>{css}</style><section class="asset"><small>今月の答え合わせ帳</small>'
+        f'<h2 style="margin-top:20px">本命の的中率、今月は <strong class="teal">{rate}%</strong></h2>'
+        f'<p class="sub" style="margin-top:8px">{n:,}レース中 {hit:,}レースで、本命が1着（数字は日ごとの%）</p>'
         f'<div class="ledger">{"".join(cols)}</div><div class="foot" style="margin-top:60px">{_e(foot)}</div></section>'
     )

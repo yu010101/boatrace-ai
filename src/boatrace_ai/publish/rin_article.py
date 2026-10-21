@@ -169,7 +169,7 @@ def generate_rin_results_article(
             res = "数えていません（締切後の保存・結果なし）" if not r else (f"<strong>的中！</strong> 結果 {r['actual_trifecta']}" if r["hit_1st"] else f"外れ… 結果 {r['actual_trifecta']}")
             rows.append(f"<li>{pk['venue']} {pk['race']}R　本命{(pk['order'] or ['?'])[0]}号艇（見込み{pk['pct']}%）→ {res}</li>")
         p.append("<ul>" + "".join(rows) + "</ul>")
-    p.append(_figure(images.get("ledger"), "今月の答え合わせ帳（仮想購入の差引の積み上げ）"))
+    p.append(_figure(images.get("ledger"), "今月の答え合わせ帳（本命の的中率）"))
 
     if inv:
         p.append("<h2>この日のお金</h2>")
@@ -264,7 +264,7 @@ def generate_rin_grades_article(
         if roi.get("total_invested"):
             line += f"仮想購入{_yen(roi['total_invested'])}に対して払戻{_yen(roi['total_payout'])}、差引{_signed(roi['total_payout'] - roi['total_invested'])}。"
         p.append(f"<p><strong>{line}</strong></p>")
-        p.append(_figure(images.get("ledger"), "今月の答え合わせ帳（仮想購入の差引の積み上げ）"))
+        p.append(_figure(images.get("ledger"), "今月の答え合わせ帳（本命の的中率）"))
         p.append("<p>全レースがそろった内訳は、今夜の答え合わせの記事に載せます。</p>")
 
     p.append("<h2>全レースの本命</h2>")

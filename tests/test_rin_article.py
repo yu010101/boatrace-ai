@@ -48,3 +48,9 @@ def test_results_shows_morning_picks_outcome():
     mp = picks(GR, {(1, 1): [1, 2, 3]})
     _, html, _ = generate_rin_results_article("2026-10-20", REC, ROI, GR, morning_picks=mp)
     assert "朝の勝負レース3選、結果は？" in html and "的中！" in html
+
+
+def test_ledger_shows_monthly_hit_rate_not_money():
+    from boatrace_ai.publish.rin_visuals import ledger_html
+    h = ledger_html([("10/19", 70, 130), ("10/20", 83, 144)], "foot")
+    assert "本命の的中率、今月は" in h and "56%" in h and "274レース中 153レース" in h and "円" not in h

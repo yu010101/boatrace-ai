@@ -156,7 +156,9 @@ class Worker:
         if not self.today.groupby(['st','r']).boat.apply(lambda s:sorted(s)==[1,2,3,4,5,6]).all():raise ValueError('incomplete programme')
         with sqlite3.connect(f'file:{ROOT}/data/racers.db?mode=ro',uri=True) as c:kib=pd.read_sql('select * from kibetsu',c)
         kib['racer']=pd.to_numeric(kib.toban,errors='coerce');kib.period_to=pd.to_datetime(kib.period_to)
-        self.modeldir=ROOT/'loop/models/202610'
+        # 2026-10-21 本人OK: 月ごとのモデル（loop/models/YYYYMM、yu01 の loop/build_month.py で前月末に作ってコピー）。無ければ止まる
+        self.modeldir=ROOT/f'loop/models/{day:%Y%m}'
+        if not (self.modeldir/'manifest.json').exists():raise RuntimeError(f'model for {day:%Y%m} missing; build and copy loop/models/{day:%Y%m} first')
         self.predictor=Predictor(history,kib,str(day),self.modeldir)
         self.day=day;self.attempts={};self.program_loaded=time.monotonic()
         event('day_ready',dict(day=str(day),races=self.today.groupby(['st','r']).ngroups,history_rows=len(history)))
@@ -165,7 +167,6 @@ class Worker:
         at=now()
         if not 8<=at.hour<22:return
         if self.day!=at.date():self.prepare(at.date())
-        if self.day>=dt.date(2026,11,1):raise RuntimeError('frozen October model expired; review/retrain required')
         if time.monotonic()-self.program_loaded>3600:
             data,source=fetch(f'https://boatraceopenapi.github.io/api/v1/{self.day.year}/{self.day:%Y%m%d}.json')
             refreshed=rows_from_json(json.loads(data),mask=True)

@@ -848,7 +848,7 @@ class TestAboutSection:
     def test_static_fallback(self) -> None:
         about = _build_about_section()
         assert "水理AIとは" in about
-        assert "全履歴公開" in about
+        assert "勝ちも負けも同じ基準で集計" in about  # 2026-10-20 根拠の無い「全履歴公開」を外した
 
     def test_with_stats(self) -> None:
         about = _build_about_section(_make_stats())
@@ -898,7 +898,7 @@ class TestCTA:
     def test_follow_cta_in_midday(self) -> None:
         _, html, _ = generate_midday_report("2026-03-01", _make_accuracy_records())
         assert "フォロー" in html
-        assert "365日" in html
+        assert "365日" not in html  # 2026-10-20 実績と合わない「365日」を外した
 
 
 # ── v4: D1 Dynamic Titles ──────────────────────────────────

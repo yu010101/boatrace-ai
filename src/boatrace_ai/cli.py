@@ -1082,59 +1082,24 @@ async def _publish_results(date_str: str | None, dry_run: bool) -> None:
         if analysis_text:
             hit_analyses[(r["stadium_number"], r["race_number"])] = analysis_text
 
-    # Step 5: Generate report (with ROI + related links + new data)
-    related_links = _get_related_links("grades", "track_record", "midday")
+    # Step 5: りん（競艇データバンク）の答え合わせ記事（2026-10-21〜。旧 generate_accuracy_report は戻す用に残す）
+    from pathlib import Path
 
-    # Step 5.5: Get trend data for chart/text display
-    accuracy_trend = get_accuracy_trend(30)
-    roi_trend = get_roi_trend(30)
-    chart_url = None
+    from boatrace_ai.publish import rin_publish as R
 
+    parts = await R.build_results(target_str, records, roi_stats, get_grades_for_date(target_str))
     if dry_run:
-        title, html_body, hashtags = generate_accuracy_report(
-            target_str, records, stats, roi_stats=roi_stats,
-            related_links=related_links,
-            hit_analyses=hit_analyses, results_data=results_data,
-            accuracy_trend=accuracy_trend, roi_trend=roi_trend,
-        )
-        md_text = _build_accuracy_markdown(target_str, records, stats, roi_stats=roi_stats)
-        display_accuracy_preview(title, md_text)
+        res = await R.publish(parts, "results", True, Path.home() / ".boatrace-ai" / "preview" / f"results_{target_str}", NoteClient)
+        console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}")
         return
-
-    # Step 6: Publish to note.com
     await _apply_jitter()
     try:
-        note_client = NoteClient()
-        with console.status("[bold green]note.com にログイン確認中..."):
-            await note_client.ensure_logged_in()
-
-        # Try chart image upload (fallback to text-based trend in article)
-        try:
-            from boatrace_ai.publish.eyecatch import generate_stats_chart
-
-            chart_path = await generate_stats_chart(accuracy_trend, roi_trend)
-            if chart_path:
-                chart_url = await note_client.upload_image(chart_path)
-        except Exception as e:
-            log.warning("グラフ画像の生成/アップロードに失敗（テキスト推移で代替）: %s", e)
-
-        title, html_body, hashtags = generate_accuracy_report(
-            target_str, records, stats, roi_stats=roi_stats,
-            related_links=related_links,
-            chart_url=chart_url, hit_analyses=hit_analyses, results_data=results_data,
-            accuracy_trend=accuracy_trend, roi_trend=roi_trend,
-        )
-
-        with console.status("[bold green]的中レポートを投稿中..."):
-            result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags,
-                eyecatch_title=title, article_type="results",
-            )
-        url = result.get("note_url", "")
-        display_publish_result(title, url, 0)
+        res = await R.publish(parts, "results", False, Path(), NoteClient)
+        url = res.get("note_url", "")
+        display_publish_result(res["title"], url, 0)
         if url:
-            save_published_article(target_str, "results", url, title)
-            save_publish_log("results", title, url)
+            save_published_article(target_str, "results", url, res["title"])
+            save_publish_log("results", res["title"], url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 
@@ -1163,18 +1128,33 @@ def publish_grades(date_str: str | None, dry_run: bool) -> None:
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
 
-    stats = get_stats()
-    related_links = _get_related_links("results", "track_record", "midday")
-    title, html_body, hashtags = generate_grade_summary_article(
-        target_str, grades, stats=stats, predictions=predictions_map,
-        related_links=related_links,
-    )
+    # 2026-10-21 りん（競艇データバンク）の型へ。旧 generate_grade_summary_article / _publish_grades_note は戻す用に残す
+    asyncio.run(_publish_rin_grades(target_str, grades, predictions_map, dry_run))
 
+
+async def _publish_rin_grades(target_str: str, grades: list[dict], predictions_map: dict, dry_run: bool) -> None:
+    from pathlib import Path
+
+    from boatrace_ai.publish import rin_publish as R
+
+    parts = await R.build_grades(target_str, grades, predictions_map, get_accuracy_for_date, get_roi_daily)
     if dry_run:
-        display_article_preview(title, html_body)
+        res = await R.publish(parts, "grades", True, Path.home() / ".boatrace-ai" / "preview" / f"grades_{target_str}", NoteClient)
+        console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}")
         return
-
-    asyncio.run(_publish_grades_note(title, html_body, hashtags))
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
+    try:
+        res = await R.publish(parts, "grades", False, Path(), NoteClient)
+        url = res.get("note_url", "")
+        display_publish_result(res["title"], url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "grades", url, res["title"])
+            save_publish_log("grades", res["title"], url)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
 
 
 async def _publish_grades_note(title: str, html_body: str, hashtags: list[str]) -> None:

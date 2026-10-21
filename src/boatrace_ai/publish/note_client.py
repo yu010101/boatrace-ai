@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 NOTE_BASE_URL = "https://note.com"
 NOTE_EDITOR_BASE = "https://editor.note.com"
 NOTE_API_URL = f"{NOTE_BASE_URL}/api/v1/text_notes"
-NOTE_UPLOAD_URL = f"{NOTE_BASE_URL}/api/v1/uploads/image"
+NOTE_PRESIGNED_URL = f"{NOTE_BASE_URL}/api/v3/images/upload/presigned_post"
 NOTE_LOGIN_URL = f"{NOTE_BASE_URL}/login"
 
 # Confirmed login form selectors (verified from NoteClient OSS project)
@@ -44,9 +44,15 @@ EDITOR_TITLE_SELECTOR = "textarea"
 EDITOR_BODY_SELECTOR = ".ProseMirror"
 
 # Common headers for API calls
+# CloudFront が httpx 既定の User-Agent を 403 で弾く（2026-10-21 確認）ので、ブラウザの UA を付ける
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 API_HEADERS = {
     "Content-Type": "application/json",
     "X-Requested-With": "XMLHttpRequest",
+    "User-Agent": BROWSER_USER_AGENT,
 }
 
 # User agents for rotation (avoid fingerprinting)
@@ -341,26 +347,53 @@ class NoteClient:
         if not image_path.exists():
             raise NotePublishError(f"画像ファイルが見つかりません: {image_path}")
 
+        # 旧 /api/v1/uploads/image は 404。エディタと同じ2段階（presigned_post → S3）で上げる（2026-10-21）
+        headers = {"X-Requested-With": "XMLHttpRequest", "User-Agent": BROWSER_USER_AGENT}
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
-            with open(image_path, "rb") as f:
-                files = {"file": (image_path.name, f, "image/png")}
-                headers = {"X-Requested-With": "XMLHttpRequest"}
-                resp = await client.post(
-                    NOTE_UPLOAD_URL,
-                    files=files,
-                    cookies=self._cookies,
-                    headers=headers,
-                )
+            resp = await client.post(
+                NOTE_PRESIGNED_URL,
+                files={"filename": (None, image_path.name), "content_type": (None, "image/png")},
+                cookies=self._cookies,
+                headers=headers,
+            )
             if resp.status_code not in (200, 201):
                 raise NotePublishError(
                     f"画像アップロードに失敗しました (HTTP {resp.status_code}): {resp.text[:200]}"
                 )
-            data = resp.json().get("data", {})
-            image_url = data.get("url") or data.get("src") or ""
-            if not image_url:
-                raise NotePublishError(f"画像URLの取得に失敗しました: {data}")
+            pre = resp.json().get("data", {})
+            if not pre.get("action") or not pre.get("url"):
+                raise NotePublishError(f"画像アップロード先の取得に失敗しました: {pre}")
+            with open(image_path, "rb") as f:
+                up = await client.post(
+                    pre["action"],
+                    data={k: str(v) for k, v in pre.get("post", {}).items()},
+                    files={"file": (image_path.name, f, "image/png")},
+                )
+            if not 200 <= up.status_code < 300:
+                raise NotePublishError(
+                    f"画像アップロードに失敗しました (S3 HTTP {up.status_code}): {up.text[:200]}"
+                )
+            image_url = pre["url"]
             log.info("Image uploaded: %s", image_url)
             return image_url
+
+    async def set_eyecatch(self, draft_id: int, png_path: Path) -> str:
+        """下書きに見出し画像を付ける（エディタのボタンは 2026-10-21 に見つからなくなった。API で付ける）"""
+        headers = {"X-Requested-With": "XMLHttpRequest", "User-Agent": BROWSER_USER_AGENT}
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            with open(png_path, "rb") as f:
+                resp = await client.post(
+                    f"{NOTE_BASE_URL}/api/v1/image_upload/note_eyecatch",
+                    data={"note_id": str(draft_id), "width": "1280", "height": "670"},
+                    files={"file": ("eyecatch.png", f, "image/png")},
+                    cookies=self._cookies,
+                    headers=headers,
+                )
+        if resp.status_code not in (200, 201):
+            raise NotePublishError(f"見出し画像の設定に失敗しました (HTTP {resp.status_code}): {resp.text[:200]}")
+        url = (resp.json().get("data") or {}).get("url", "")
+        log.info("Eyecatch set via API: %s", url)
+        return url
 
     async def _create_draft(self) -> dict:
         """Create a new draft article via API.
@@ -527,6 +560,8 @@ class NoteClient:
             await page.wait_for_load_state("networkidle")
             await asyncio.sleep(2)
             log.info("Navigated to publish page: %s", page.url)
+            # 公開設定の画面で出る確認の画面（2026-10-21 VersionVerificationModal が全体をふさいだ）を閉じる
+            await self._dismiss_modals(page)
 
             # Step 3: Set hashtags on publish settings page
             if hashtags:
@@ -537,9 +572,10 @@ class NoteClient:
                 await self._set_paid_settings(page, price)
 
             # Step 5: Click "投稿する" button (final publish)
+            await self._dismiss_modals(page)
             # Use exact match first to avoid "公開" matching "公開に進む" etc.
             final_btn = await self._find_button(
-                page, ["投稿する", "公開する"]
+                page, ["投稿する", "公開する", "更新する"]  # 更新する=公開済み記事の上書き(2026-10-21)
             )
             if not final_btn:
                 # Broader fallback
@@ -739,6 +775,10 @@ class NoteClient:
             # Get modal class for logging
             modal_cls = await modal.first.get_attribute("class") or ""
             log.warning("[modal] Detected: %s", modal_cls[:80])
+            try:
+                log.warning("[modal] Text: %s", (await page.locator('.ReactModal__Content').first.inner_text())[:200].replace(chr(10), ' / '))
+            except Exception:
+                pass
             await asyncio.sleep(1)
 
             # Try confirm button texts
@@ -908,6 +948,7 @@ class NoteClient:
         hashtags: list[str] | None = None,
         eyecatch_title: str | None = None,
         article_type: str | None = None,
+        eyecatch_png: Path | None = None,
     ) -> dict:
         """Create and publish a paid article on note.com.
 
@@ -937,8 +978,9 @@ class NoteClient:
         log.info("Publishing article: %s (¥%d)", title, price)
 
         # Step 0: Generate eyecatch image (optional, best-effort)
+        # りんの記事（2026-10-21〜）は見出し画像を呼び出し元で作って eyecatch_png で渡し、API で設定する
         eyecatch_path: Path | None = None
-        if eyecatch_title:
+        if eyecatch_title and not eyecatch_png:
             eyecatch_path = await self._generate_eyecatch_image(
                 eyecatch_title, article_type or "prediction"
             )
@@ -963,6 +1005,11 @@ class NoteClient:
         await self._save_draft_content(
             draft["id"], title, html_body, hashtags
         )
+        if eyecatch_png:
+            try:
+                await self.set_eyecatch(draft["id"], eyecatch_png)
+            except Exception as e:
+                log.warning("見出し画像の設定に失敗（本文はそのまま公開する）: %s", e)
 
         # Step 3: Publish via Playwright editor (eyecatch set in editor page)
         try:

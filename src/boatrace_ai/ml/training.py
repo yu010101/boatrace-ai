@@ -19,11 +19,11 @@ LGBM_PARAMS: dict = {
     "objective": "lambdarank",
     "metric": "ndcg",
     "eval_at": [1, 3],
-    "num_leaves": 63,
+    "num_leaves": 15,
     "learning_rate": 0.1,
     "feature_fraction": 0.6,
     "bagging_fraction": 0.8,
-    "bagging_freq": 15,
+    "bagging_freq": 25,
     "min_child_samples": 150,
     "reg_alpha": 0.0,
     "reg_lambda": 0.0,
@@ -37,7 +37,7 @@ EARLY_STOPPING_ROUNDS = 50
 SEMAPHORE_LIMIT = 5
 
 # Optuna HPO settings
-OPTUNA_N_TRIALS = 50
+OPTUNA_N_TRIALS = 100
 OPTUNA_TIMEOUT = 600  # 10 minutes
 
 

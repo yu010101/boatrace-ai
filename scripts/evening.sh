@@ -26,6 +26,6 @@ mkdir -p ~/.boatrace-ai/logs
   boatrace roi check
   boatrace roi today
   # 2026-10-20 本人「無料記事だけ再開」
-  boatrace publish results || echo "[WARN] results publish failed"
+# [PAUSED 2026-10-28 GitHub Actions と二重公開になるため。公開は GH Actions boatrace.yml の1本]   boatrace publish results || echo "[WARN] results publish failed"
   echo "=== $(date) evening job end ==="
 } >> "$LOG" 2>&1

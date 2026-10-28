@@ -23,7 +23,7 @@ mkdir -p ~/.boatrace-ai/logs
   echo "=== $(date) morning job start ==="
   boatrace predict today --mode ml
   # 2026-10-20 本人「無料記事だけ再開」
-  boatrace publish grades || echo "[WARN] grades publish failed (may be already-published today)"
+# [PAUSED 2026-10-28 GitHub Actions と二重公開になるため。公開は GH Actions boatrace.yml の1本]   boatrace publish grades || echo "[WARN] grades publish failed (may be already-published today)"
 # [PAUSED 2026-09-16 ユーザー指示: 外部投稿を停止]   boatrace publish premium || echo "[WARN] premium publish failed (may be already-published today)"
   echo "=== $(date) morning job end ==="
 } >> "$LOG" 2>&1

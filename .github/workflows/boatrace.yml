@@ -19,6 +19,7 @@ on:
           - evening
           - weekly-report
           - train
+          - preview
 
 env:
   # 2026-10-30: date.today() を日本の日付にする（UTC のままだと 9時前の実行が前日扱いになる）
@@ -393,3 +394,45 @@ jobs:
         with:
           path: .boatrace-data
           key: boatrace-data-${{ github.run_id }}-train
+
+  # 2026-10-30: 記事の改善版を、本番のデータで投稿せずに作る（note-score-20261030 の採点用）。キャッシュは保存しない＝本番の DB を変えない
+  preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[ml]"
+          pip install playwright
+          playwright install chromium --with-deps
+
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .boatrace-data
+          key: boatrace-data-${{ github.run_id }}
+          restore-keys: boatrace-data-
+
+      - name: Preview articles (no publish)
+        continue-on-error: true
+        run: |
+          D=$(date +%F)
+          boatrace publish grades "$D" --dry-run
+          boatrace publish premium "$D" --dry-run
+          Y=$(date -d '-1 day' +%F)
+          boatrace publish results "$Y" --dry-run
+          boatrace publish midday "$D" --dry-run
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rin-preview
+          path: ~/.boatrace-ai/preview
+          if-no-files-found: warn

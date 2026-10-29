@@ -130,6 +130,55 @@ def open_after():
     return datetime.now(DL.JST) + PUBLISH_MARGIN
 
 
+CALIB_DAYS = 30
+
+
+async def calibration(upto: str, days: int = CALIB_DAYS) -> dict | None:
+    """upto までの days 日、締切前に保存した予想について、見込みの帯ごとの (本命が1着だった数, レース数)"""
+    from boatrace_ai.storage.database import get_accuracy_for_date, get_grades_for_date
+    bands: dict[str, list[int]] = {}
+    seen = []
+    d = date.fromisoformat(upto) - timedelta(days=days - 1)
+    while d.isoformat() <= upto:
+        ds = d.isoformat()
+        d += timedelta(days=1)
+        recs = get_accuracy_for_date(ds)
+        if not recs:
+            continue
+        close = await _closed(ds)
+        if close is None:
+            continue
+        keep, _ = DL.split_records(recs, _made_at(ds), close)
+        prob = {(g["stadium_number"], g["race_number"]): g["top1_prob"] for g in get_grades_for_date(ds)}
+        used = False
+        for r in keep:
+            pr = prob.get((r["stadium_number"], r["race_number"]))
+            if pr is None:
+                continue
+            b = bands.setdefault(A.calib_band(round(pr * 100)), [0, 0])
+            b[0] += 1 if r["hit_1st"] else 0
+            b[1] += 1
+            used = True
+        if used:
+            seen.append(ds)
+    if not seen:
+        return None
+    return {"from": seen[0], "to": seen[-1], "days": len(seen), "bands": {k: tuple(v) for k, v in bands.items()}}
+
+
+async def safe_calibration(upto: str) -> dict | None:
+    """実績の集計に失敗しても記事は出す（その段落を出さないだけ）"""
+    try:
+        return await calibration(upto)
+    except Exception as e:
+        log.warning("見込みの実績を集計できなかった（%s）: %s", upto, e)
+        return None
+
+
+def calib_rows(calib: dict) -> list[tuple[str, int, int]]:
+    return [(f"見込み{label}", *calib["bands"][label]) for _, _, label in A.CALIB_BANDS if label in calib["bands"]]
+
+
 def _late(race_date: str, close: dict) -> set:
     made = _made_at(race_date)
     return {k for k in made if not DL.before_deadline(made[k], close.get(k))}
@@ -172,12 +221,14 @@ async def build_grades(race_date: str, grades: list[dict], predictions: dict, ge
     top = A.picks(grades, predictions, close, after=open_after() if race_date == date.today().isoformat() else None)
     dot = race_date.replace("-", ".")
     ledger = await month_ledger(yday)
+    calib = await safe_calibration(yday)
     pngs = {
         "cover": await V.render(V.cover_html(**A.grades_cover_spec(race_date, grades, top, A.yesterday_line(yesterday))), "cover"),
         "picks": await V.render(V.picks_html(top, f"{dot} ／ %は本命が1着になる見込み。約束ではありません"), "picks") if top else None,
         "ledger": await V.render(V.ledger_html(ledger, f"〜{yday.replace('-', '.')} ／ 締切前に保存した予想だけ。本命＝1着になる見込みがいちばん高い艇"), "ledger") if ledger else None,
+        "calib": await V.render(V.grade_hits_html(f"見込みの答え合わせ ／ {A._date_short(calib['from'])}〜{A._date_short(calib['to'])}", ["見込みごとに、", "本命が1着だった数"], calib_rows(calib), f"〜{yday.replace('-', '.')} ／ 締切前に保存した予想だけ"), "calib") if calib else None,
     }
-    return {"pngs": pngs, "top": top, "make": lambda images: A.generate_rin_grades_article(race_date, grades, predictions, yesterday=yesterday, images=images, excluded=excluded, top=top)}
+    return {"pngs": pngs, "top": top, "make": lambda images: A.generate_rin_grades_article(race_date, grades, predictions, yesterday=yesterday, images=images, excluded=excluded, top=top, calib=calib)}
 
 
 async def build_results(race_date: str, records: list[dict], roi: dict, grades: list[dict]) -> dict:
@@ -212,14 +263,18 @@ async def build_race(race, prediction, grade: dict, free: bool = True) -> dict:
     pct = round(grade["top1_prob"] * 100)
     top = [{"st": race.race_stadium_number, "venue": venue, "race": race.race_number, "order": order[:3], "pct": pct, "close": c.strftime("%H:%M") if c else ""}]
     dot = race.race_date.replace("-", ".")
+    calib = await safe_calibration((date.fromisoformat(race.race_date) - timedelta(days=1)).isoformat())
     pngs = {
         "cover": await V.render(V.cover_html(**A.race_cover_spec(race.race_date, venue, race.race_number, order, pct)), "cover"),
         "picks": await V.render(V.picks_html(top, f"{dot} ／ %は本命が1着になる見込み。約束ではありません"), "picks"),
+        "calib": await V.render(V.grade_hits_html(f"見込みの答え合わせ ／ {A._date_short(calib['from'])}〜{A._date_short(calib['to'])}", ["見込みごとに、", "本命が1着だった数"], calib_rows(calib), "締切前に保存した予想だけ"), "calib") if calib else None,
     }
     def make(images):
-        title, html, tags = A.generate_rin_race_article(race, prediction, grade, top[0]["close"], free)
+        title, html, tags = A.generate_rin_race_article(race, prediction, grade, top[0]["close"], free, calib=calib)
         fig = A._figure(images.get("picks"), "りんの予想（本命・対抗・3着候補と、本命が1着になる見込み）")
-        return title, html.replace("<h2>りんの予想</h2>", "<h2>りんの予想</h2>\n" + fig, 1) if fig else html, tags
+        html = html.replace("<h2>りんの予想</h2>", "<h2>りんの予想</h2>\n" + fig, 1) if fig else html
+        cf = A._figure(images.get("calib"), "見込みの帯ごとの、本命が1着だった数とレース数")
+        return title, html.replace("<h2>この見込み、これまでどうだった？</h2>", "<h2>この見込み、これまでどうだった？</h2>\n" + cf, 1) if cf else html, tags
     return {"pngs": pngs, "make": make}
 
 

@@ -146,3 +146,15 @@ def test_saved_picks_roundtrip(tmp_path, monkeypatch):
     top = [{"st": 8, "venue": "常滑", "race": 6, "order": [1, 2, 3], "pct": 78, "close": "12:40"}]
     R.save_picks("2026-10-29", top)
     assert R.load_picks("2026-10-29") == top
+
+
+def test_calib_lines_uses_actual_rate_and_breakeven():
+    from boatrace_ai.publish.rin_article import breakeven_odds, calib_band, calib_lines
+    assert calib_band(78) == "70〜79%" and calib_band(80) == "80%以上" and calib_band(49) == "50%未満"
+    assert breakeven_odds(60, 100) == 1.7  # 100/60=1.666… を切り上げ
+    assert breakeven_odds(0, 100) is None
+    calib = {"from": "2026-09-30", "to": "2026-10-29", "days": 30, "bands": {"70〜79%": (180, 300)}}
+    html = "".join(calib_lines(78, calib))
+    assert "300レース" in html and "180レース（60%）" in html and "1.7倍" in html
+    assert calib_lines(85, calib) == []  # その帯の実績が無ければ書かない
+    assert calib_lines(78, {**calib, "bands": {"70〜79%": (10, 20)}}) == []  # 少なすぎる帯も書かない

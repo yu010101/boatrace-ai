@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections import defaultdict
 
@@ -231,6 +232,7 @@ def generate_rin_grades_article(
     images: dict[str, tuple[str, int, int]] | None = None,
     excluded: dict | None = None,
     top: list[dict] | None = None,
+    calib: dict | None = None,
 ) -> tuple[str, str, list[str]]:
     """朝（当日分）の予想記事。top は picks()（締切時刻つき）。yesterday: {"date", "records", "roi"}"""
     images = images or {}
@@ -258,6 +260,11 @@ def generate_rin_grades_article(
             items.append(f"<li><strong>{t['venue']} {t['race']}R</strong>{'（締切 ' + t['close'] + '）' if t['close'] else ''}　{marks}　本命が1着になる見込み <strong>{t['pct']}%</strong></li>")
         p.append("<ul>" + "".join(items) + "</ul>")
         p.append("<p>見込みが高くても外れることはあります。今夜の答え合わせで、この3レースの結果も出します。</p>")
+        cl = calib_lines(top[0]["pct"], calib)
+        if cl:
+            p.append("<h2>この見込み、これまでどうだった？</h2>")
+            p.append(_figure(images.get("calib"), "見込みの帯ごとの、本命が1着だった数とレース数"))
+            p.extend(cl)
 
     if yesterday and yesterday.get("records"):
         recs, roi = yesterday["records"], yesterday.get("roi") or {}
@@ -317,6 +324,39 @@ def race_cover_spec(race_date: str, venue: str, race_no: int, order: list[int], 
     }
 
 
+# 2026-10-30 採点（note-score-20261030）で「78%の根拠が無い・買う/見送りの基準が無い」と出た。過去の実績（締切前に保存した予想だけ）を見込みの帯ごとに出し、
+# その割合から単勝の損益分岐オッズを示す。割合が無い・少ないときは何も書かない（数字を作らない）
+CALIB_BANDS = [(80, 101, "80%以上"), (70, 80, "70〜79%"), (60, 70, "60〜69%"), (50, 60, "50〜59%"), (0, 50, "50%未満")]
+CALIB_MIN_N = 30
+
+
+def calib_band(pct: int) -> str:
+    return next(label for lo, hi, label in CALIB_BANDS if lo <= pct < hi)
+
+
+def breakeven_odds(hit: int, n: int) -> float | None:
+    """本命の単勝がこの倍率より高ければ、過去の1着の割合どおりなら払戻が購入額を上回る（小数1桁に切り上げ）"""
+    if not n or not hit:
+        return None
+    return math.ceil(n / hit * 10) / 10
+
+
+def calib_lines(pct: int, calib: dict | None) -> list[str]:
+    """calib: {"from","to","days","bands":{label:(hit,n)}}。この見込みの帯の実績と、単勝の損益分岐を本文の段落で返す"""
+    if not calib:
+        return []
+    label = calib_band(pct)
+    hit, n = calib["bands"].get(label, (0, 0))
+    if n < CALIB_MIN_N:
+        return []
+    be = breakeven_odds(hit, n)
+    out = [f"<p><strong>見込み{label}と出したレースは、{_date_short(calib['from'])}〜{_date_short(calib['to'])}に{n}レース。本命が1着だったのは{hit}レース（{round(hit / n * 100)}%）でした。</strong></p>"]
+    if be:
+        out.append(f"<p>この割合どおりなら、本命の単勝が<strong>{be:.1f}倍より高いとき</strong>だけ、続けて買うと払戻が購入額を上回る計算です。"
+                   f"締切直前の単勝が{be:.1f}倍以下なら、見送りの目安です。過去の割合なので、これからも同じとは限りません。</p>")
+    return out
+
+
 def honmei_bets(bets: list[str] | None, honmei: int | None) -> list[str]:
     """本命から始まる買い目だけ（2026-10-30: ◎1 なのに「3連単 2-1-4」だけを載せ、予想と買い目が食い違っていた）"""
     if not bets or honmei is None:
@@ -324,7 +364,7 @@ def honmei_bets(bets: list[str] | None, honmei: int | None) -> list[str]:
     return [b for b in bets if (b.split(" ", 1) + [""])[1].lstrip().startswith(str(honmei))]
 
 
-def generate_rin_race_article(race, prediction, grade: dict, close: str = "", free: bool = True) -> tuple[str, str, list[str]]:
+def generate_rin_race_article(race, prediction, grade: dict, close: str = "", free: bool = True, calib: dict | None = None) -> tuple[str, str, list[str]]:
     """推奨度Sの1レースの記事（旧【Sランク】個別予想）。pct は朝の記事と同じ「本命が1着になる見込み」（grades.top1_prob）"""
     venue = STADIUMS.get(race.race_stadium_number, str(race.race_stadium_number))
     order = list(prediction.predicted_order)
@@ -343,6 +383,10 @@ def generate_rin_race_article(race, prediction, grade: dict, close: str = "", fr
              f"<li><strong>{venue} {race.race_number}R</strong>{'（締切 ' + close + '）' if close else ''}　{marks}</li>"
              + "".join(f"<li>{m}{b}号艇　{name(b)}</li>" for m, b in zip(["◎ 本命 ", "○ 対抗 ", "△ 3着候補 "], order[:3]))
              + f"<li>本命が1着になる見込み <strong>{pct}%</strong></li></ul>")
+    cl = calib_lines(pct, calib)
+    if cl:
+        p.append("<h2>この見込み、これまでどうだった？</h2>")
+        p.extend(cl)
     bets = honmei_bets(prediction.recommended_bets, order[0] if order else None)
     if bets:
         p.append("<h2>買い目の候補</h2>")

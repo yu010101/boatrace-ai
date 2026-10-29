@@ -295,3 +295,204 @@ def generate_rin_grades_article(
     p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
     hashtags = ["競艇", "ボートレース", "競艇予想", "ボートレース予想", "勝負レース", "競艇データバンク", *venues[:3]]
     return title, "\n".join(x for x in p if x), hashtags
+
+
+# ── 2026-10-28 本人「旧型を全部新型で作り直す」: 旧 article.py の5種類（Sランク個別・午前の結果速報・高配当速報・実績・週間）をりんの型にする ──
+# 型は朝夜の記事と同じ（冒頭に数字 → 図 → 全件の内訳 → りんの一言 → 条件）。題名に「AI」を入れない・「水理AI」を使わない・
+# 予想の文章（LLM の analysis）は載せない（外れの原因や根拠の話を作らないため）。当たりだけを抜き出さない（高配当速報もその日の全体と並べる）。
+
+RACER_CLASS = {1: "A1", 2: "A2", 3: "B1", 4: "B2"}
+
+
+def race_cover_spec(race_date: str, venue: str, race_no: int, order: list[int], pct: int) -> dict:
+    return {
+        "tag": f"{_date_short(race_date)} りんの勝負レース",
+        "headline": [f"{venue} {race_no}R", "本命はこの艇！"],
+        "amount_html": f"本命{order[0] if order else '?'}号艇 <strong class=\"teal\">{pct}%</strong>",
+        "sub": ["全6艇のデータつき", "夜に、当たりも外れも答え合わせ"],
+        "foot": f"{race_date.replace('-', '.')} ／ %は1着になる見込み。舟券は20歳以上で",
+    }
+
+
+def generate_rin_race_article(race, prediction, grade: dict, close: str = "", free: bool = True) -> tuple[str, str, list[str]]:
+    """推奨度Sの1レースの記事（旧【Sランク】個別予想）。pct は朝の記事と同じ「本命が1着になる見込み」（grades.top1_prob）"""
+    venue = STADIUMS.get(race.race_stadium_number, str(race.race_stadium_number))
+    order = list(prediction.predicted_order)
+    pct = round(grade["top1_prob"] * 100)
+    boat_of = {b.racer_boat_number: b for b in race.boats}
+    name = lambda n: boat_of[n].racer_name if n in boat_of else "?"  # noqa: E731
+    title = f"{_date_short(race.race_date)} {venue}{race.race_number}R【勝負レース】本命{order[0]}号艇・見込み{pct}%｜全6艇のデータつき【競艇予想】"
+
+    p: list[str] = []
+    p.append(f"<p><strong>{venue} {race.race_number}Rの本命は{order[0]}号艇（{name(order[0])}）。1着になる見込みは{pct}%です。</strong>"
+             f"推奨度Sのレースから、見込みの高い順に選んだ1つです。</p>")
+    p.append("<p>りん「このレース、アタシは本命を信じてる！ でも外れることもあるから、夜の答え合わせも見てね。」</p>")
+    p.append("<h2>りんの予想</h2>")
+    marks = " ".join(f"{m}{b}" for m, b in zip(["◎", "○", "△"], order[:3]))
+    p.append("<ul>"
+             f"<li><strong>{venue} {race.race_number}R</strong>{'（締切 ' + close + '）' if close else ''}　{marks}</li>"
+             + "".join(f"<li>{m}{b}号艇　{name(b)}</li>" for m, b in zip(["◎ 本命 ", "○ 対抗 ", "△ 3着候補 "], order[:3]))
+             + f"<li>本命が1着になる見込み <strong>{pct}%</strong></li></ul>")
+    if prediction.recommended_bets:
+        p.append("<h2>買い目の候補</h2>")
+        p.append("<ul>" + "".join(f"<li>{b}</li>" for b in prediction.recommended_bets) + "</ul>")
+        p.append("<p>候補は予想の並びから作ったもので、的中や払戻を約束するものではありません。</p>")
+    if not free:
+        p.append("<p>ここから先は、全6艇のデータと6着までの予想です。</p><pay>")
+    p.append("<h2>全6艇のデータ</h2>")
+    p.append("<p>号艇・選手・級別、全国勝率・当地勝率・平均スタート・モーター2連率・ボート2連率の順です。</p>")
+    rows = []
+    for b in sorted(race.boats, key=lambda b: b.racer_boat_number):
+        st = f"{b.racer_average_start_timing:.2f}" if b.racer_average_start_timing is not None else "—"
+        rows.append(f"<li><strong>{b.racer_boat_number}号艇 {b.racer_name}</strong>（{RACER_CLASS.get(b.racer_class_number, '?')}）　"
+                    f"全国{b.racer_national_top_1_percent:.2f}・当地{b.racer_local_top_1_percent:.2f}・ST{st}・"
+                    f"モーター{b.racer_assigned_motor_top_2_percent:.1f}%・ボート{b.racer_assigned_boat_top_2_percent:.1f}%</li>")
+    p.append("<ul>" + "".join(rows) + "</ul>")
+    p.append("<h2>6着までの予想</h2>")
+    p.append(f"<p>{' → '.join(str(n) for n in order)}</p>")
+    p.append("<h2>この記事の数字について</h2>")
+    p.append(f"<ul><li>{GRADE_RULES}</li><li>選手とモーターの数字は、番組表（出走表）に載っている値です</li></ul>")
+    p.append(CLOSING)
+    p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
+    hashtags = ["競艇", "ボートレース", "競艇予想", "ボートレース予想", "勝負レース", "競艇データバンク", venue]
+    return title, "\n".join(x for x in p if x), hashtags
+
+
+def midday_cover_spec(race_date: str, records: list[dict]) -> dict:
+    h = sum(1 for r in records if r["hit_1st"])
+    return {
+        "tag": f"{_date_short(race_date)} りんの途中経過",
+        "headline": ["午前の答え合わせ！", f"本命{h}/{len(records)}レース的中"],
+        "amount_html": f"<strong class=\"teal\">{round(h / len(records) * 100) if records else 0}%</strong>",
+        "sub": [f"結果が出た{len(records)}レース", "夜に、全レースで答え合わせ"],
+        "foot": f"{race_date.replace('-', '.')} ／ 締切前に保存した予想だけ",
+    }
+
+
+def generate_rin_midday_article(race_date: str, records: list[dict], grades: list[dict],
+                                images: dict | None = None, excluded: dict | None = None,
+                                morning_picks: list[dict] | None = None) -> tuple[str, str, list[str]]:
+    """昼の途中経過（旧「午前の結果速報」）。records は結果が出たレースのうち締切前に保存した予想だけ"""
+    images = images or {}
+    n, h = len(records), sum(1 for r in records if r["hit_1st"])
+    tri = sorted([r for r in records if r["hit_trifecta"]], key=lambda r: (r["stadium_number"], r["race_number"]))
+    venues = _venues([r["stadium_number"] for r in records])
+    title = f"{_date_short(race_date)}午前の答え合わせ｜本命{h}/{n}的中" + (f"・3連単{len(tri)}本ズバリ" if tri else "") + "【競艇予想】"
+
+    p: list[str] = []
+    p.append(f"<p><strong>結果が出た{n}レースのうち、本命が1着だったのは{h}レース（{round(h / n * 100) if n else 0}%）。</strong>"
+             f"{'・'.join(venues[:3])}{'など' if len(venues) > 3 else ''}、ここまでの途中経過です。</p>")
+    p.append("<p>りん「午前はここまで！ 残りのレースも、夜の答え合わせで全部出すね。」</p>")
+    if morning_picks:
+        rec_of = {(r["stadium_number"], r["race_number"]): r for r in records}
+        p.append("<h2>朝の勝負レース、ここまでの結果</h2>")
+        rows = []
+        for pk in morning_picks:
+            r = rec_of.get((pk["st"], pk["race"]))
+            res = "まだ結果が出ていません" if not r else (f"<strong>的中！</strong> 結果 {r['actual_trifecta']}" if r["hit_1st"] else f"外れ… 結果 {r['actual_trifecta']}")
+            rows.append(f"<li>{pk['venue']} {pk['race']}R　本命{(pk['order'] or ['?'])[0]}号艇（見込み{pk['pct']}%）→ {res}</li>")
+        p.append("<ul>" + "".join(rows) + "</ul>")
+    p.append("<h2>推奨度ごとの途中経過</h2>")
+    p.append(_figure(images.get("grades"), "推奨度ごとの、本命が1着だった数とレース数（ここまで）"))
+    gr = grade_hit_rows(grades, records)
+    if gr:
+        p.append("<ul>" + "".join(f"<li>{label}: {hh}/{c}レース（{round(hh / c * 100)}%）</li>" for label, hh, c in gr) + "</ul>")
+    p.append(f"<h2>3連単が予想どおりだったレース（{len(tri)}本）</h2>")
+    if tri:
+        p.append("<ul>" + "".join(f"<li>{STADIUMS.get(r['stadium_number'], r['stadium_number'])} {r['race_number']}R　{r['actual_trifecta']}　払戻 {_yen(int(r.get('trifecta_payout') or 0))}（100円あたり）</li>" for r in tri) + "</ul>")
+    else:
+        p.append("<p>ここまで、3連単の予想が結果と一致したレースはありません。</p>")
+    miss = defaultdict(int)
+    for r in records:
+        if not r["hit_1st"]:
+            miss[STADIUMS.get(r["stadium_number"], r["stadium_number"])] += 1
+    if miss:
+        p.append(f"<h2>本命が1着にならなかったレース（{n - h}レース）</h2>")
+        p.append("<p>" + "、".join(f"{k} {v}" for k, v in miss.items()) + "</p>")
+    p.append("<h2>この記事の数字について</h2>")
+    p.append(f"<ul><li>{_deadline_note(excluded, n)}</li><li>この記事を作った時点で結果が出ていたレースだけです。1日の数字は夜の答え合わせで出します</li><li>{GRADE_RULES}</li></ul>")
+    p.append(CLOSING)
+    p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
+    return title, "\n".join(x for x in p if x), ["競艇", "ボートレース", "競艇予想", "答え合わせ", "競艇データバンク", *venues[:3]]
+
+
+def hit_cover_spec(race_date: str, best: dict, records: list[dict]) -> dict:
+    venue = STADIUMS.get(best["stadium_number"], str(best["stadium_number"]))
+    return {
+        "tag": f"{_date_short(race_date)} りんの答え合わせ",
+        "headline": [f"{venue} {best['race_number']}R", "3連単が予想どおり！"],
+        "amount_html": f"払戻 <strong class=\"teal\">{int(best['trifecta_payout']):,}円</strong>",
+        "sub": [f"この日の3連単一致は{sum(1 for r in records if r['hit_trifecta'])}本", f"本命は{len(records)}レース中{sum(1 for r in records if r['hit_1st'])}的中"],
+        "foot": f"{race_date.replace('-', '.')} ／ 100円あたりの払戻。実際に買った舟券ではありません",
+    }
+
+
+def generate_rin_hit_article(race_date: str, best: dict, records: list[dict], images: dict | None = None,
+                             excluded: dict | None = None) -> tuple[str, str, list[str]]:
+    """高配当の速報（旧 hit-flash）。当たりだけを抜き出さないよう、その日の全体の数字と一致した3連単の全部を並べる"""
+    images = images or {}
+    venue = STADIUMS.get(best["stadium_number"], str(best["stadium_number"]))
+    n, h = len(records), sum(1 for r in records if r["hit_1st"])
+    tri = sorted([r for r in records if r["hit_trifecta"]], key=lambda r: -int(r.get("trifecta_payout") or 0))
+    pay = int(best["trifecta_payout"])
+    title = f"{_date_short(race_date)} {venue}{best['race_number']}R 3連単{pay:,}円が予想どおり｜その日の答え合わせつき【競艇予想】"
+    p: list[str] = []
+    p.append(f"<p><strong>{_date_jp(race_date)}の{venue} {best['race_number']}R、3連単{best['actual_trifecta']}が予想どおりで、払戻は100円あたり{_yen(pay)}でした。</strong>"
+             f"この日いちばん払戻が大きかった一致です。</p>")
+    p.append("<p>りん「やったー！ …でもね、この日ぜんぶが当たったわけじゃないよ。全体も見てね。」</p>")
+    p.append("<h2>この日の全体</h2>")
+    p.append(f"<p><strong>本命が1着だったのは{n}レース中{h}レース（{round(h / n * 100) if n else 0}%）。3連単の予想が結果と一致したのは{len(tri)}本です。</strong></p>")
+    p.append(_figure(images.get("ledger"), "今月の答え合わせ帳（本命の的中率）"))
+    p.append(f"<h2>3連単が予想どおりだったレース（{len(tri)}本・払戻の大きい順）</h2>")
+    p.append("<ul>" + "".join(f"<li>{STADIUMS.get(r['stadium_number'], r['stadium_number'])} {r['race_number']}R　{r['actual_trifecta']}　払戻 {_yen(int(r.get('trifecta_payout') or 0))}</li>" for r in tri) + "</ul>")
+    p.append("<p>一致したものを全部載せています。払戻の大きい一致がこの先も続くかは、1日分では分かりません。</p>")
+    p.append("<h2>この記事の数字について</h2>")
+    p.append(f"<ul><li>払戻は100円あたりの公式の金額で、実際に買った舟券ではありません</li><li>{_deadline_note(excluded, n)}</li></ul>")
+    p.append(CLOSING)
+    p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
+    return title, "\n".join(x for x in p if x), ["競艇", "ボートレース", "競艇予想", "答え合わせ", "競艇データバンク", venue]
+
+
+def span_cover_spec(days: list[dict], label: str) -> dict:
+    n, h = sum(d["n"] for d in days), sum(d["hit"] for d in days)
+    return {
+        "tag": f"りんの答え合わせ帳 {label}",
+        "headline": [label, f"本命{h:,}/{n:,}的中"],
+        "amount_html": f"<strong class=\"teal\">{round(h / n * 100) if n else 0}%</strong>",
+        "sub": ["当たりも外れも、仮想購入の収支も全部", "締切前に保存した予想だけ"],
+        "foot": f"{days[0]['date'].replace('-', '.')}〜{days[-1]['date'].replace('-', '.')} ／ 実際に買った舟券ではありません" if days else "",
+    }
+
+
+def generate_rin_span_article(days: list[dict], label: str, images: dict | None = None, paid: bool = False) -> tuple[str, str, list[str]]:
+    """期間のまとめ（旧 実績レポート・週間レポート）。days は古い順の {date, hit, n, tri, inv, pay, dropped_races, dropped_bets}（締切前に保存したものだけ）"""
+    images = images or {}
+    n, h = sum(d["n"] for d in days), sum(d["hit"] for d in days)
+    tri = sum(d["tri"] for d in days)
+    inv, pay = sum(d["inv"] for d in days), sum(d["pay"] for d in days)
+    title = f"{label}の答え合わせ｜本命{h:,}/{n:,}的中（{round(h / n * 100) if n else 0}%）・3連単{tri}本【競艇予想】"
+    p: list[str] = []
+    p.append(f"<p><strong>{label}（{_date_short(days[0]['date'])}〜{_date_short(days[-1]['date'])}・{len(days)}日）で、本命が1着だったのは{n:,}レース中{h:,}レース（{round(h / n * 100) if n else 0}%）。"
+             f"3連単の予想が結果と一致したのは{tri}本でした。</strong></p>")
+    if inv:
+        p.append(f"<p><strong>仮想購入は{_yen(inv)}、払戻は{_yen(pay)}、差引{_signed(pay - inv)}。</strong></p>")
+    p.append("<p>りん「いい日も悪い日も、ぜんぶ並べるね。1日だけ見て決めないでね。」</p>" if not inv or pay >= inv
+             else "<p>りん「うぅ…この期間は払戻が購入額より少なかったよ。隠さず全部見せるね。」</p>")
+    p.append("<h2>日ごとの本命の的中率</h2>")
+    p.append(_figure(images.get("ledger"), f"{label}の答え合わせ帳（本命の的中率）"))
+    if paid:
+        p.append("<p>ここから先は、日ごとの内訳です。</p><pay>")
+    p.append("<h2>日ごとの内訳</h2>")
+    p.append("<ul>" + "".join(
+        f"<li>{_date_short(d['date'])}　本命{d['hit']}/{d['n']}（{round(d['hit'] / d['n'] * 100) if d['n'] else 0}%）・3連単{d['tri']}本"
+        + (f"・仮想購入{_yen(d['inv'])}→払戻{_yen(d['pay'])}（{_signed(d['pay'] - d['inv'])}）" if d["inv"] else "") + "</li>" for d in days) + "</ul>")
+    dr, db = sum(d.get("dropped_races", 0) for d in days), sum(d.get("dropped_bets", 0) for d in days)
+    p.append("<h2>この記事の数字について</h2>")
+    p.append("<ul><li>数えたのは、締切より前に保存した予想と仮想購入だけです"
+             + (f"（締切後に保存された予想{dr}レースと仮想購入{db}点は数えていません）" if dr or db else "") + "</li>"
+             + "<li>締切との照合ができなかった日は、この記事に入れていません</li>"
+             + "<li>仮想購入は、決まった条件で買ったことにして計算したもので、実際に買った舟券ではありません</li>"
+             + f"<li>{GRADE_RULES}</li></ul>")
+    p.append(CLOSING)
+    p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
+    return title, "\n".join(x for x in p if x), ["競艇", "ボートレース", "競艇予想", "答え合わせ", "競艇データバンク"]

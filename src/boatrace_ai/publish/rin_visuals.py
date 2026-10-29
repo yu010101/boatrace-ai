@@ -159,7 +159,7 @@ def picks_html(top: list[dict], foot: str) -> str:
     )
 
 
-def ledger_html(rows: list[tuple[str, int, int]], foot: str) -> str:
+def ledger_html(rows: list[tuple[str, int, int]], foot: str, period: str = "今月") -> str:
     """今月の答え合わせ帳。rows は (日付 "10/20", 本命が1着だった数, レース数)。棒は日ごとの的中率、見出しは今月の累計"""
     hit = sum(h for _, h, _ in rows)
     n = sum(c for _, _, c in rows)
@@ -173,8 +173,8 @@ def ledger_html(rows: list[tuple[str, int, int]], foot: str) -> str:
         )
     css = _PICK_CSS + ".ledger{align-items:flex-end;height:380px}.lpct{position:absolute;width:100%;text-align:center;font-size:20px;color:#536968;top:0}"
     return (
-        f'<style>{css}</style><section class="asset"><small>今月の答え合わせ帳</small>'
-        f'<h2 style="margin-top:20px">本命の的中率、今月は <strong class="teal">{rate}%</strong></h2>'
+        f'<style>{css}</style><section class="asset"><small>{_e(period)}の答え合わせ帳</small>'
+        f'<h2 style="margin-top:20px">本命の的中率、{_e(period)}は <strong class="teal">{rate}%</strong></h2>'
         f'<p class="sub" style="margin-top:8px">{n:,}レース中 {hit:,}レースで、本命が1着（数字は日ごとの%）</p>'
         f'<div class="ledger">{"".join(cols)}</div><div class="foot" style="margin-top:60px">{_e(foot)}</div></section>'
     )

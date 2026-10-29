@@ -173,7 +173,91 @@ async def build_results(race_date: str, records: list[dict], roi: dict, grades: 
     return {"pngs": pngs, "make": lambda images: A.generate_rin_results_article(race_date, records, roi, grades, images=images, excluded=excluded, morning_picks=morning)}
 
 
-async def publish(parts: dict, article_type: str, dry_run: bool, preview_dir: Path, new_client) -> dict:
+async def build_race(race, prediction, grade: dict, free: bool = True) -> dict:
+    """推奨度Sの1レースの記事の材料（旧 premium）"""
+    close = await _closed(race.race_date)
+    c = (close or {}).get((race.race_stadium_number, race.race_number))
+    venue = A.STADIUMS.get(race.race_stadium_number, str(race.race_stadium_number))
+    order = list(prediction.predicted_order)
+    pct = round(grade["top1_prob"] * 100)
+    top = [{"st": race.race_stadium_number, "venue": venue, "race": race.race_number, "order": order[:3], "pct": pct, "close": c.strftime("%H:%M") if c else ""}]
+    dot = race.race_date.replace("-", ".")
+    pngs = {
+        "cover": await V.render(V.cover_html(**A.race_cover_spec(race.race_date, venue, race.race_number, order, pct)), "cover"),
+        "picks": await V.render(V.picks_html(top, f"{dot} ／ %は本命が1着になる見込み。約束ではありません"), "picks"),
+    }
+    def make(images):
+        title, html, tags = A.generate_rin_race_article(race, prediction, grade, top[0]["close"], free)
+        fig = A._figure(images.get("picks"), "りんの予想（本命・対抗・3着候補と、本命が1着になる見込み）")
+        return title, html.replace("<h2>りんの予想</h2>", "<h2>りんの予想</h2>\n" + fig, 1) if fig else html, tags
+    return {"pngs": pngs, "make": make}
+
+
+async def build_midday(race_date: str, records: list[dict], grades: list[dict]) -> dict:
+    """昼の途中経過の材料（旧 midday）。records は結果が出たレースだけ"""
+    close = await _closed(race_date)
+    excluded = None
+    if close is not None:
+        records, drop = DL.split_records(records, _made_at(race_date), close)
+        excluded = {"races": len(drop), "bets": 0}
+    late = _late(race_date, close) if close is not None else set()
+    morning = A.picks([g for g in grades if (g["stadium_number"], g["race_number"]) not in late], _pred_map(race_date), close)
+    dot = race_date.replace("-", ".")
+    pngs: dict[str, Path | None] = {"cover": await V.render(V.cover_html(**A.midday_cover_spec(race_date, records)), "cover")}
+    rows = A.grade_hit_rows(grades, records)
+    if rows:
+        pngs["grades"] = await V.render(V.grade_hits_html("ここまでの途中経過", ["推奨度ごとの", "本命が1着だった数"], rows, f"{dot} ／ 結果が出たレースだけ"), "grades")
+    return {"pngs": pngs, "make": lambda images: A.generate_rin_midday_article(race_date, records, grades, images=images, excluded=excluded, morning_picks=morning)}
+
+
+async def build_hit(race_date: str, records: list[dict], min_payout: int) -> dict | None:
+    """高配当の速報の材料（旧 hit-flash）。締切前に保存した予想の一致だけで選ぶ。無ければ None"""
+    records, _, excluded = await checked_results(race_date, records)
+    big = [r for r in records if r["hit_trifecta"] and int(r.get("trifecta_payout") or 0) >= min_payout]
+    if not big:
+        return None
+    best = max(big, key=lambda r: int(r["trifecta_payout"]))
+    ledger = await month_ledger(race_date)
+    pngs: dict[str, Path | None] = {"cover": await V.render(V.cover_html(**A.hit_cover_spec(race_date, best, records)), "cover")}
+    if ledger:
+        pngs["ledger"] = await V.render(V.ledger_html(ledger, f"〜{race_date.replace('-', '.')} ／ 締切前に保存した予想だけ"), "ledger")
+    return {"pngs": pngs, "make": lambda images: A.generate_rin_hit_article(race_date, best, records, images=images, excluded=excluded), "best": best}
+
+
+async def span_days(upto: str, days: int) -> list[dict]:
+    """upto までの days 日の、締切前に保存したものだけの日ごとの数字（古い順）。締切が取れない日は入れない"""
+    from boatrace_ai.storage.database import get_accuracy_for_date
+    out = []
+    for i in range(days - 1, -1, -1):
+        d = (date.fromisoformat(upto) - timedelta(days=i)).isoformat()
+        recs = get_accuracy_for_date(d)
+        if not recs or await _closed(d) is None:
+            continue
+        keep, roi, exc = await checked_results(d, recs)
+        if keep:
+            out.append({"date": d, "hit": sum(1 for r in keep if r["hit_1st"]), "n": len(keep), "tri": sum(1 for r in keep if r["hit_trifecta"]),
+                        "inv": roi.get("total_invested", 0), "pay": roi.get("total_payout", 0),
+                        "dropped_races": (exc or {}).get("races", 0), "dropped_bets": (exc or {}).get("bets", 0)})
+    return out
+
+
+async def build_span(upto: str, days: int, label: str, paid: bool = False) -> dict | None:
+    """期間のまとめの材料（旧 track-record・weekly-premium）"""
+    rows = await span_days(upto, days)
+    if not rows:
+        return None
+    if len(rows) < days:
+        # 締切と照合できない日は入れないので、題名と図には実際に数えた日数を書く（2026-10-28: 30日のうち23日だった）
+        label = f"{A._date_short(rows[0]['date'])}〜{A._date_short(rows[-1]['date'])}の{len(rows)}日"
+    ledger = [(f"{int(r['date'][5:7])}/{int(r['date'][8:10])}", r["hit"], r["n"]) for r in rows]
+    pngs = {
+        "cover": await V.render(V.cover_html(**A.span_cover_spec(rows, label)), "cover"),
+        "ledger": await V.render(V.ledger_html(ledger, f"{rows[0]['date'].replace('-', '.')}〜{upto.replace('-', '.')} ／ 締切前に保存した予想だけ", period=label), "ledger"),
+    }
+    return {"pngs": pngs, "make": lambda images: A.generate_rin_span_article(rows, label, images=images, paid=paid)}
+
+
+async def publish(parts: dict, article_type: str, dry_run: bool, preview_dir: Path, new_client, price: int = 0) -> dict:
     """parts は build_* の戻り値。dry_run なら preview_dir に書き出して終わる"""
     pngs = parts["pngs"]
     if dry_run:
@@ -185,6 +269,6 @@ async def publish(parts: dict, article_type: str, dry_run: bool, preview_dir: Pa
     await note_client.ensure_logged_in()
     images = await _upload_all(note_client, {k: p for k, p in pngs.items() if k != "cover"})
     title, html_body, hashtags = parts["make"](images)
-    result = await note_client.create_and_publish(title, html_body, price=0, hashtags=hashtags, article_type=article_type, eyecatch_png=pngs.get("cover"))
+    result = await note_client.create_and_publish(title, html_body, price=price, hashtags=hashtags, article_type=article_type, eyecatch_png=pngs.get("cover"))
     result["title"] = title
     return result

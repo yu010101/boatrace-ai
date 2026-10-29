@@ -1270,23 +1270,22 @@ async def _publish_premium(date_str: str | None, dry_run: bool, free_override: b
                 failed += 1
                 continue
 
-            title, html_body, hashtags = generate_article(
-                race, prediction, grade="S", free=is_free,
-            )
+            # 2026-10-28 本人「旧型を全部新型で作り直す」: りんの型（rin_article.generate_rin_race_article）。旧 generate_article は戻す用に残す
+            from pathlib import Path
+
+            from boatrace_ai.publish import rin_publish as R
+            grade = next(g for g in s_grades if (g["stadium_number"], g["race_number"]) == (race.race_stadium_number, race.race_number))
+            parts = await R.build_race(race, prediction, grade, free=is_free)
 
             if dry_run:
-                md_text = _build_markdown(race, prediction, grade="S", free=is_free)
-                display_article_preview(title, md_text)
+                res = await R.publish(parts, "prediction", True, Path.home() / ".boatrace-ai" / "preview" / f"premium_{target_str}_{race.race_stadium_number}_{race.race_number}", NoteClient)
+                console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}")
                 success += 1
                 continue
 
-            display_publish_progress(i, total, title)
             try:
-                result = await note_client.create_and_publish(
-                    title, html_body, price=price, hashtags=hashtags,
-                    eyecatch_title=title, article_type="prediction",
-                )
-                url = result.get("note_url", "")
+                res = await R.publish(parts, "prediction", False, Path(), NoteClient, price=price)
+                title, url = res["title"], res.get("note_url", "")
                 display_publish_result(title, url, price)
                 save_publish_log("premium", title, url)
                 success += 1
@@ -1321,22 +1320,36 @@ def publish_hit_flash(date_str: str | None, min_payout: int, dry_run: bool) -> N
         console.print(f"[dim]{target_str}: {min_payout}円以上の3連単的中なし。スキップ。[/dim]")
         return
 
-    # Pick the highest payout hit (1 article only to avoid spam)
-    best = max(big_hits, key=lambda r: r["trifecta_payout"])
-    stadium_name = STADIUMS.get(best["stadium_number"], str(best["stadium_number"]))
-    console.print(
-        f"\n[bold green]的中速報: {stadium_name} {best['race_number']}R "
-        f"3連単 ¥{best['trifecta_payout']:,}[/bold green]"
-    )
+    # 2026-10-28 りんの型へ（rin_article.generate_rin_hit_article）。締切前に保存した予想の一致だけで選び、その日の全体と並べる
+    asyncio.run(_publish_rin_hit(target_str, records, min_payout, dry_run))
 
-    stats = get_stats()
-    title, html_body, hashtags = generate_hit_flash_article(target_str, best, stats)
 
-    if dry_run:
-        display_article_preview(title, html_body)
+async def _publish_rin_hit(target_str: str, records: list[dict], min_payout: int, dry_run: bool) -> None:
+    from pathlib import Path
+
+    from boatrace_ai.publish import rin_publish as R
+
+    parts = await R.build_hit(target_str, records, min_payout)
+    if parts is None:
+        console.print(f"[dim]{target_str}: 締切前に保存した予想で {min_payout}円以上の3連単一致なし。スキップ。[/dim]")
         return
-
-    asyncio.run(_publish_hit_flash_note(title, html_body, hashtags))
+    if dry_run:
+        res = await R.publish(parts, "hit_flash", True, Path.home() / ".boatrace-ai" / "preview" / f"hit_{target_str}", NoteClient)
+        console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}")
+        return
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
+    try:
+        res = await R.publish(parts, "hit_flash", False, Path(), NoteClient)
+        url = res.get("note_url", "")
+        display_publish_result(res["title"], url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "hit_flash", url, res["title"])
+            save_publish_log("hit_flash", res["title"], url)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
 
 
 async def _publish_hit_flash_note(title: str, html_body: str, hashtags: list[str]) -> None:
@@ -1380,7 +1393,42 @@ def _get_related_links(*article_types: str) -> dict[str, dict]:
     return links
 
 
+async def _publish_rin_span(days: int, label: str, kind: str, price: int, dry_run: bool) -> None:
+    """2026-10-28 りんの型の期間まとめ（旧 実績レポート・週間レポート）。締切前に保存したものだけで数える"""
+    from pathlib import Path
+
+    from boatrace_ai.publish import rin_publish as R
+
+    upto = (date.today() - timedelta(days=1)).isoformat()
+    parts = await R.build_span(upto, days, label, paid=price > 0)
+    if parts is None:
+        display_error("締切と照合できた実績データがありません。")
+        return
+    if dry_run:
+        res = await R.publish(parts, kind, True, Path.home() / ".boatrace-ai" / "preview" / f"{kind}_{upto}", NoteClient)
+        console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}（¥{price:,}）")
+        return
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
+    try:
+        res = await R.publish(parts, "track_record", False, Path(), NoteClient, price=price)
+        url = res.get("note_url", "")
+        display_publish_result(res["title"], url, price)
+        if url:
+            save_published_article(date.today().isoformat(), kind, url, res["title"])
+            save_publish_log(kind, res["title"], url)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
+
+
 async def _publish_track_record(days: int, dry_run: bool) -> None:
+    # 2026-10-28 りんの型へ。旧 generate_track_record_article は _publish_track_record_legacy に残す
+    return await _publish_rin_span(days, f"直近{days}日", "track_record", 0, dry_run)
+
+
+async def _publish_track_record_legacy(days: int, dry_run: bool) -> None:
     accuracy_trend = get_accuracy_trend(days)
     roi_trend = get_roi_trend(days)
     stats = get_stats()
@@ -1429,6 +1477,11 @@ def publish_weekly_premium(dry_run: bool) -> None:
 
 
 async def _publish_weekly_premium(dry_run: bool) -> None:
+    # 2026-10-28 りんの型へ（価格は従来どおり config.NOTE_WEEKLY_PREMIUM_PRICE、日ごとの内訳から有料）。旧版は _publish_weekly_premium_legacy
+    return await _publish_rin_span(7, "この1週間", "weekly_premium", config.NOTE_WEEKLY_PREMIUM_PRICE, dry_run)
+
+
+async def _publish_weekly_premium_legacy(dry_run: bool) -> None:
     accuracy_trend = get_accuracy_trend(30)
     roi_trend = get_roi_trend(30)
     stats = get_stats()
@@ -1516,31 +1569,25 @@ async def _publish_midday(date_str: str | None, dry_run: bool) -> None:
         display_error(f"{target_str}の午前データがありません。")
         return
 
-    related_links = _get_related_links("grades", "results", "track_record")
-    title, html_body, hashtags = generate_midday_report(
-        target_str, records, related_links=related_links,
-    )
+    # 2026-10-28 りんの型へ（rin_article.generate_rin_midday_article）。旧 generate_midday_report は戻す用に残す
+    from pathlib import Path
 
+    from boatrace_ai.publish import rin_publish as R
+
+    parts = await R.build_midday(target_str, records, get_grades_for_date(target_str))
     if dry_run:
-        console.print(f"\n[bold]タイトル:[/bold] {title}")
-        console.print(html_body)
+        res = await R.publish(parts, "midday", True, Path.home() / ".boatrace-ai" / "preview" / f"midday_{target_str}", NoteClient)
+        console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}")
         return
 
     await _apply_jitter()
     try:
-        note_client = NoteClient()
-        with console.status("[bold green]note.com にログイン確認中..."):
-            await note_client.ensure_logged_in()
-        with console.status("[bold green]中間速報を投稿中..."):
-            result = await note_client.create_and_publish(
-                title, html_body, price=0, hashtags=hashtags,
-                eyecatch_title=title, article_type="midday",
-            )
-        url = result.get("note_url", "")
-        display_publish_result(title, url, 0)
+        res = await R.publish(parts, "midday", False, Path(), NoteClient)
+        url = res.get("note_url", "")
+        display_publish_result(res["title"], url, 0)
         if url:
-            save_published_article(target_str, "midday", url, title)
-            save_publish_log("midday", title, url)
+            save_published_article(target_str, "midday", url, res["title"])
+            save_publish_log("midday", res["title"], url)
     except Exception as e:
         display_error(f"投稿に失敗: {e}")
 

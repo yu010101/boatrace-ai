@@ -423,13 +423,13 @@ jobs:
 
       - name: Preview articles (no publish)
         continue-on-error: true
+        # 前日分で作る（当日は朝の実行前だと予想が無い。前日なら朝・昼・夜の全部がそろう）
         run: |
-          D=$(date +%F)
-          boatrace publish grades "$D" --dry-run
-          boatrace publish premium "$D" --dry-run
           Y=$(date -d '-1 day' +%F)
+          boatrace publish grades "$Y" --dry-run
+          boatrace publish premium "$Y" --dry-run
           boatrace publish results "$Y" --dry-run
-          boatrace publish midday "$D" --dry-run
+          boatrace publish midday "$Y" --dry-run
 
       - uses: actions/upload-artifact@v4
         with:

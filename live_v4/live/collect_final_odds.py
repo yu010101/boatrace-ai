@@ -26,7 +26,9 @@ def ensure_table(c):
 def targets(c, primary):
     """本番が締切前に保存したレースのうち、確定オッズをまだ取っていないもの（古い日から）"""
     done = {(d, s, r) for d, s, r in c.execute("SELECT day, st, r FROM final_win_odds")}
-    with sqlite3.connect(f"file:{primary}?mode=ro", uri=True) as p:
+    # 2026-10-29: 本番DBは WAL。読み取り専用(mode=ro)だと、他に開いている処理が無い夜は -shm を作れず「unable to open database file」で毎晩止まっていた。
+    # 普通に開いて SELECT だけする
+    with sqlite3.connect(str(primary)) as p:
         rows = p.execute("SELECT day, st, r, deadline FROM live_v4_predictions WHERE day >= ? ORDER BY day, deadline", (str(START),)).fetchall()
     now = runner.now()
     return [(d, s, r) for d, s, r, dl in rows if (d, s, r) not in done and dt.datetime.fromisoformat(dl) + dt.timedelta(minutes=30) < now]

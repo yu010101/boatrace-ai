@@ -144,7 +144,17 @@ class Worker:
                 if len(candidate)>0 and candidate.place.notna().all():part=candidate
             if part is None:
                 data,_=fetch(f'https://boatraceopenapi.github.io/api/v1/{d.year}/{d:%Y%m%d}.json')
-                part=rows_from_json(json.loads(data))
+                obj=json.loads(data);part=rows_from_json(obj)
+                # 2026-10-29: 開催されていない・結果が丸ごと無いレースだけ履歴から外す。対象は番組表が「順延」「中止」（10/21 江戸川の全12R）か、
+                # 着順と払戻が全艇・全券種で空（10/25 若松12R。配信元の欠けか不開催かは区別できない）。一部の艇だけ欠けたものは従来どおり止める
+                def not_held(rc):
+                    rs=rc.get('result') or {}
+                    empty=all(((rs.get('racers') or {}).get(b) or {}).get('place_number') is None for b in (rc.get('racers') or {})) and not any((rs.get('payouts') or {}).values())
+                    return rc.get('day_number_source') in ('順延','中止') or empty
+                off={(int(st),int(r)) for st,sd in obj.get('programs',{}).get('stadiums',{}).items() for r,rc in sd.get('races',{}).items() if not_held(rc)}
+                if off:
+                    part=part[[(s,r) not in off for s,r in zip(part.st,part.r)]].reset_index(drop=True)
+                    event('history_skip_not_held',dict(day=str(d),races=sorted(off)))
                 if part.empty or not (part.date==pd.Timestamp(d)).all() or part.place.isna().any():
                     raise ValueError('unsettled/cancelled history day requires review: '+str(d))
                 path.write_bytes(data)

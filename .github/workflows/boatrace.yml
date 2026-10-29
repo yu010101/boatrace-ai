@@ -330,6 +330,16 @@ jobs:
           NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
         run: boatrace publish weekly-premium
 
+      # 2026-10-29 本人「事実の判断材料の記事を足す」: 場ごとの1号艇の勝ちやすさ（直近90日・週1回）
+      - name: Publish venue facts
+        continue-on-error: true
+        env:
+          NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
+        run: boatrace publish venues
+
       - name: Save data cache
         uses: actions/cache/save@v4
         if: always()

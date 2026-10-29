@@ -1525,6 +1525,43 @@ async def _publish_weekly_premium_legacy(dry_run: bool) -> None:
         display_error(f"投稿に失敗: {e}")
 
 
+@publish.command("venues")
+@click.option("--days", default=90, type=click.IntRange(14, 365), help="数える日数 (default: 90)")
+@click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")
+def publish_venues(days: int, dry_run: bool) -> None:
+    """場ごとの1号艇の勝ちやすさ（2026-10-29 本人「事実の判断材料の記事を足す」・週1回）"""
+    asyncio.run(_publish_rin_venues(days, dry_run))
+
+
+async def _publish_rin_venues(days: int, dry_run: bool) -> None:
+    from pathlib import Path
+
+    from boatrace_ai.publish import rin_publish as R
+
+    upto = (date.today() - timedelta(days=1)).isoformat()
+    parts = await R.build_venues(upto, days)
+    if parts is None:
+        display_error("結果のデータがありません。")
+        return
+    if dry_run:
+        res = await R.publish(parts, "venues", True, Path.home() / ".boatrace-ai" / "preview" / f"venues_{upto}", NoteClient)
+        console.print(f"[green]プレビュー: {res['preview']}[/green]  {res['title']}")
+        return
+    if _check_daily_cap():
+        console.print("[yellow]本日の投稿上限に達しています。スキップ。[/yellow]")
+        return
+    await _apply_jitter()
+    try:
+        res = await R.publish(parts, "venues", False, Path(), NoteClient)
+        url = res.get("note_url", "")
+        display_publish_result(res["title"], url, 0)
+        if url:
+            save_published_article(date.today().isoformat(), "venues", url, res["title"])
+            save_publish_log("venues", res["title"], url)
+    except Exception as e:
+        display_error(f"投稿に失敗: {e}")
+
+
 @publish.command("midday")
 @click.argument("date_str", default=None, required=False)
 @click.option("--dry-run", is_flag=True, help="投稿せずプレビューのみ表示")

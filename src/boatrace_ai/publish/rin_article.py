@@ -496,3 +496,60 @@ def generate_rin_span_article(days: list[dict], label: str, images: dict | None 
     p.append(CLOSING)
     p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
     return title, "\n".join(x for x in p if x), ["競艇", "ボートレース", "競艇予想", "答え合わせ", "競艇データバンク"]
+
+
+# ── 2026-10-29 本人「事実の判断材料の記事を足す」: 場ごとの1号艇の勝ちやすさ（週1回・予想の上乗せが示せるまでの間の中身）──
+# 予想の上乗せは示せていない（同じ3,039レースで本命1着 53.5%・毎回1号艇 52.6%）。だから「勝てる」とは書かず、公式の結果を数えた事実だけを出す。
+
+def venue_rows(results: list[dict]) -> list[dict]:
+    """results は {stadium_number, first(1着の艇), trifecta_payout}。中止・結果なしは渡さない。場ごとの1号艇の1着率と3連単の払戻の中央値"""
+    by: dict[int, list[dict]] = defaultdict(list)
+    for r in results:
+        by[r["stadium_number"]].append(r)
+    out = []
+    for st, rs in by.items():
+        pays = sorted(int(r["trifecta_payout"]) for r in rs if r.get("trifecta_payout"))
+        mid = pays[len(pays) // 2] if pays else 0
+        out.append({"st": st, "venue": STADIUMS.get(st, str(st)), "n": len(rs), "boat1": sum(1 for r in rs if r["first"] == 1), "median_tri": mid})
+    return sorted(out, key=lambda v: (-v["boat1"] / v["n"], v["st"]))
+
+
+def venue_cover_spec(rows: list[dict], label: str) -> dict:
+    n, w = sum(v["n"] for v in rows), sum(v["boat1"] for v in rows)
+    hi, lo = rows[0], rows[-1]
+    return {
+        "tag": f"りんのデータ帳 {label}",
+        "headline": ["1号艇がいちばん勝つ場、", "いちばん負ける場"],
+        "amount_html": f"{hi['venue']} <strong class=\"teal\">{round(hi['boat1'] / hi['n'] * 100)}%</strong> ／ {lo['venue']} {round(lo['boat1'] / lo['n'] * 100)}%",
+        "sub": [f"全{len(rows)}場{n:,}レースの平均は{round(w / n * 100)}%", "公式の結果を全部数えました"],
+        "foot": f"{label} ／ 中止・結果なしのレースは数えていません",
+    }
+
+
+def generate_rin_venue_article(rows: list[dict], label: str, images: dict | None = None) -> tuple[str, str, list[str]]:
+    """場ごとの1号艇の1着率と荒れやすさ。rows は venue_rows() の戻り値（1着率の高い順）"""
+    images = images or {}
+    n, w = sum(v["n"] for v in rows), sum(v["boat1"] for v in rows)
+    avg = round(w / n * 100) if n else 0
+    hi, lo = rows[0], rows[-1]
+    pct = lambda v: round(v["boat1"] / v["n"] * 100)  # noqa: E731
+    title = f"1号艇がいちばん勝つ場は{hi['venue']}（{pct(hi)}%）、負ける場は{lo['venue']}（{pct(lo)}%）｜{label}の全{n:,}レース【競艇予想】"
+    p: list[str] = []
+    p.append(f"<p><strong>{label}の全{len(rows)}場{n:,}レースで、1号艇が1着になったのは{w:,}レース（{avg}%）。"
+             f"いちばん高いのは{hi['venue']}の{pct(hi)}%、いちばん低いのは{lo['venue']}の{pct(lo)}%でした。</strong></p>")
+    p.append(f"<p>りん「同じ1号艇でも、場によってこんなに違うんだよ。{lo['venue']}で1号艇を本命にするときは、ちょっと考えてね。」</p>")
+    p.append("<h2>場ごとの1号艇の1着率</h2>")
+    p.append(_figure(images.get("venues"), "場ごとの、1号艇が1着になった数とレース数"))
+    p.append("<p>1着率の高い順です。（　）の中は3連単の払戻の中央値（100円あたり）で、高い場ほど荒れやすいと読めます。</p>")
+    p.append("<ul>" + "".join(f"<li><strong>{v['venue']}</strong>　1号艇 {v['boat1']}/{v['n']}レース（{pct(v)}%）　3連単の中央値 {_yen(v['median_tri'])}</li>" for v in rows) + "</ul>")
+    p.append("<h2>この数字の使い方</h2>")
+    p.append(f"<p>全場の平均{avg}%より低い場では、1号艇を本命にした舟券が外れやすかった、ということです。"
+             "朝の勝負レースで本命が1号艇でも、その場の1着率と並べて見てください。</p>")
+    p.append("<p>これは過去の結果を数えたもので、これからのレースの結果を約束するものではありません。風・水面・選手の組み合わせで、1日の中でも変わります。</p>")
+    p.append("<h2>この記事の数字について</h2>")
+    p.append(f"<ul><li>数えたのは{label}に結果が出たレースです。中止・順延・結果が出ていないレースは入れていません</li>"
+             "<li>1着と3連単の払戻は、ボートレースの公式の結果（Boatrace Open API）から取っています</li>"
+             "<li>3連単の中央値は、その場のレースを払戻の小さい順に並べたときの真ん中の値です</li></ul>")
+    p.append(CLOSING)
+    p.append(f'<p>このnoteについて：<a href="{INTRO_URL}">りんと、当たりも外れも答え合わせ。競艇データバンクを始めます</a></p>')
+    return title, "\n".join(x for x in p if x), ["競艇", "ボートレース", "競艇予想", "競艇データ", "競艇データバンク", hi["venue"], lo["venue"]]

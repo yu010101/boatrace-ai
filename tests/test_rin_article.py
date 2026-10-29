@@ -104,3 +104,14 @@ def test_span_article_sums_days_and_paywall():
     assert "差引−400円" in html and "締切後に保存された予想2レースと仮想購入4点" in html and "<pay>" not in html
     _, paid, _ = generate_rin_span_article(days, "この1週間", paid=True)
     assert "<pay>" in paid
+
+
+def test_venue_article_counts_and_no_promise():
+    from boatrace_ai.publish.rin_article import generate_rin_venue_article, venue_rows
+    res = [{"stadium_number": 1, "first": 1, "trifecta_payout": 1000}, {"stadium_number": 1, "first": 1, "trifecta_payout": 3000},
+           {"stadium_number": 2, "first": 3, "trifecta_payout": 9000}, {"stadium_number": 2, "first": 1, "trifecta_payout": 500}]
+    rows = venue_rows(res)
+    assert [(r["venue"], r["boat1"], r["n"]) for r in rows] == [("桐生", 2, 2), ("戸田", 1, 2)]
+    title, html, _ = generate_rin_venue_article(rows, "10/1〜10/28")
+    assert "桐生（100%）" in title and "戸田（50%）" in title and "AI" not in title
+    assert "約束するものではありません" in html and "全2場4レース" in html and "3,000円" in html

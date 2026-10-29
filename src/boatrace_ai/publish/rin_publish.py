@@ -257,6 +257,43 @@ async def build_span(upto: str, days: int, label: str, paid: bool = False) -> di
     return {"pngs": pngs, "make": lambda images: A.generate_rin_span_article(rows, label, images=images, paid=paid)}
 
 
+def _results_since(since: str, upto: str) -> list[dict]:
+    """results から 1着の艇と3連単の払戻。結果が無い・読めないレースは入れない"""
+    import json
+    from boatrace_ai.storage.database import _get_connection
+    conn = _get_connection()
+    try:
+        rows = conn.execute("SELECT stadium_number, actual_order, payouts_json FROM results WHERE race_date BETWEEN ? AND ?", (since, upto)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for st, order, pj in rows:
+        try:
+            first = json.loads(order)[0]
+            tri = (json.loads(pj or "{}").get("trifecta") or [{}])[0].get("payout")
+        except (TypeError, ValueError, IndexError):
+            continue
+        if first:
+            out.append({"stadium_number": st, "first": int(first), "trifecta_payout": tri})
+    return out
+
+
+async def build_venues(upto: str, days: int = 90) -> dict | None:
+    """場ごとの1号艇の勝ちやすさの材料（週1回）"""
+    since = (date.fromisoformat(upto) - timedelta(days=days - 1)).isoformat()
+    res = _results_since(since, upto)
+    if not res:
+        return None
+    rows = A.venue_rows(res)
+    label = f"{A._date_short(since)}〜{A._date_short(upto)}"
+    gr = [(v["venue"], v["boat1"], v["n"]) for v in rows]
+    pngs = {
+        "cover": await V.render(V.cover_html(**A.venue_cover_spec(rows, label)), "cover"),
+        "venues": await V.render(V.grade_hits_html("場ごとの1号艇", ["1号艇が1着だった数"], gr, f"{label} ／ 公式の結果。中止・結果なしは数えていません"), "venues"),
+    }
+    return {"pngs": pngs, "make": lambda images: A.generate_rin_venue_article(rows, label, images=images)}
+
+
 async def publish(parts: dict, article_type: str, dry_run: bool, preview_dir: Path, new_client, price: int = 0) -> dict:
     """parts は build_* の戻り値。dry_run なら preview_dir に書き出して終わる"""
     pngs = parts["pngs"]

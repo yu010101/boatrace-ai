@@ -73,8 +73,9 @@ def _signed(n: int) -> str:
     return ("−" if n < 0 else "+") + _yen(abs(n))
 
 
-def picks(grades: list[dict], predictions: dict[tuple[int, int], list[int]], close: dict | None = None, n: int = PICKS_N) -> list[dict]:
-    """勝負レース: 推奨度Sのうち本命の見込みが高い順、1場1レースまで。朝と夜で同じ選び方をする（夜の記事で結果を確かめる）"""
+def picks(grades: list[dict], predictions: dict[tuple[int, int], list[int]], close: dict | None = None, n: int = PICKS_N, after=None) -> list[dict]:
+    """勝負レース: 推奨度Sのうち本命の見込みが高い順、1場1レースまで。朝と夜で同じ選び方をする（夜の記事で結果を確かめる）。
+    after（記事を出す時刻）を渡すと、締切がそれより前か締切が分からないレースは選ばない（2026-10-30: 朝の実行が3時間遅れ、締切10:16の常滑1Rを11:19に出した）"""
     out, used = [], set()
     for g in sorted([g for g in grades if g["grade"] == "S"], key=lambda g: (-g["top1_prob"], g["stadium_number"], g["race_number"])):
         if g["stadium_number"] in used:
@@ -82,6 +83,8 @@ def picks(grades: list[dict], predictions: dict[tuple[int, int], list[int]], clo
         k = (g["stadium_number"], g["race_number"])
         order = predictions.get(k) or []
         c = (close or {}).get(k)
+        if after is not None and (c is None or c <= after):
+            continue
         out.append({"st": g["stadium_number"], "venue": STADIUMS.get(g["stadium_number"], str(g["stadium_number"])), "race": g["race_number"],
                     "order": order[:3], "pct": round(g["top1_prob"] * 100), "close": c.strftime("%H:%M") if c else ""})
         used.add(g["stadium_number"])
@@ -314,6 +317,13 @@ def race_cover_spec(race_date: str, venue: str, race_no: int, order: list[int], 
     }
 
 
+def honmei_bets(bets: list[str] | None, honmei: int | None) -> list[str]:
+    """本命から始まる買い目だけ（2026-10-30: ◎1 なのに「3連単 2-1-4」だけを載せ、予想と買い目が食い違っていた）"""
+    if not bets or honmei is None:
+        return []
+    return [b for b in bets if (b.split(" ", 1) + [""])[1].lstrip().startswith(str(honmei))]
+
+
 def generate_rin_race_article(race, prediction, grade: dict, close: str = "", free: bool = True) -> tuple[str, str, list[str]]:
     """推奨度Sの1レースの記事（旧【Sランク】個別予想）。pct は朝の記事と同じ「本命が1着になる見込み」（grades.top1_prob）"""
     venue = STADIUMS.get(race.race_stadium_number, str(race.race_stadium_number))
@@ -333,9 +343,10 @@ def generate_rin_race_article(race, prediction, grade: dict, close: str = "", fr
              f"<li><strong>{venue} {race.race_number}R</strong>{'（締切 ' + close + '）' if close else ''}　{marks}</li>"
              + "".join(f"<li>{m}{b}号艇　{name(b)}</li>" for m, b in zip(["◎ 本命 ", "○ 対抗 ", "△ 3着候補 "], order[:3]))
              + f"<li>本命が1着になる見込み <strong>{pct}%</strong></li></ul>")
-    if prediction.recommended_bets:
+    bets = honmei_bets(prediction.recommended_bets, order[0] if order else None)
+    if bets:
         p.append("<h2>買い目の候補</h2>")
-        p.append("<ul>" + "".join(f"<li>{b}</li>" for b in prediction.recommended_bets) + "</ul>")
+        p.append("<ul>" + "".join(f"<li>{b}</li>" for b in bets) + "</ul>")
         p.append("<p>候補は予想の並びから作ったもので、的中や払戻を約束するものではありません。</p>")
     if not free:
         p.append("<p>ここから先は、全6艇のデータと6着までの予想です。</p><pay>")

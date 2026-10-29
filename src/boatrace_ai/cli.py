@@ -1151,6 +1151,7 @@ async def _publish_rin_grades(target_str: str, grades: list[dict], predictions_m
         url = res.get("note_url", "")
         display_publish_result(res["title"], url, 0)
         if url:
+            R.save_picks(target_str, parts["top"])
             save_published_article(date.today().isoformat(), "grades", url, res["title"])
             save_publish_log("grades", res["title"], url)
     except Exception as e:
@@ -1203,6 +1204,19 @@ async def _publish_premium(date_str: str | None, dry_run: bool, free_override: b
     if not s_grades:
         display_error(f"{target_str}のSランクレースがありません。")
         return
+
+    # 2026-10-30: 締切を過ぎた（または記事を出すまでに締め切る）レースは出さない。朝の実行が3時間遅れ、締切10:16の常滑1Rを11:19に出した
+    if target_str == date.today().isoformat():
+        from boatrace_ai.publish import rin_publish as R
+        close = await R._closed(target_str)
+        after = R.open_after()
+        before = len(s_grades)
+        s_grades = [g for g in s_grades if close and (c := close.get((g["stadium_number"], g["race_number"]))) and c > after]
+        if len(s_grades) < before:
+            console.print(f"[yellow]締切が近い・過ぎた・不明のSランク {before - len(s_grades)} レースを除外[/yellow]")
+        if not s_grades:
+            display_error(f"{target_str}の締切前のSランクレースがありません。")
+            return
 
     # Sort by top1_prob descending and limit to NOTE_PREMIUM_CAP
     s_grades.sort(key=lambda g: g["top1_prob"], reverse=True)

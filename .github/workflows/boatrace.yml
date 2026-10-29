@@ -2,9 +2,9 @@ name: Boatrace AI Daily
 
 on:
   schedule:
-    - cron: '30 22 * * *'   # morning (7:30 JST)
-    - cron: '0 4 * * *'     # midday (13:00 JST)
-    - cron: '30 12 * * *'   # evening (21:30 JST)
+    - cron: '13 21 * * *'   # morning (6:13 JST)。2026-10-30: 毎時0分・30分は混み3〜6時間遅れていた（7:30→10:52）ので外す
+    - cron: '13 4 * * *'    # midday (13:13 JST)
+    - cron: '47 12 * * *'   # evening (21:47 JST)
     - cron: '0 15 * * 0'    # weekly report (Sunday 0:00 JST)
     - cron: '0 18 * * 6'    # weekly train (Saturday 3:00 JST)
   workflow_dispatch:
@@ -21,6 +21,8 @@ on:
           - train
 
 env:
+  # 2026-10-30: date.today() を日本の日付にする（UTC のままだと 9時前の実行が前日扱いになる）
+  TZ: Asia/Tokyo
   BOATRACE_DB_PATH: ${{ github.workspace }}/.boatrace-data/boatrace.db
   BOATRACE_MODEL_PATH: ${{ github.workspace }}/.boatrace-data/model.lgb
   BOATRACE_EV_MIN: '0.30'
@@ -28,7 +30,7 @@ env:
 jobs:
   morning:
     if: >-
-      github.event.schedule == '30 22 * * *' ||
+      github.event.schedule == '13 21 * * *' ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'morning')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -127,7 +129,7 @@ jobs:
 
   midday:
     if: >-
-      github.event.schedule == '0 4 * * *' ||
+      github.event.schedule == '13 4 * * *' ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'midday')
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -155,8 +157,12 @@ jobs:
       - name: Ensure data directory
         run: mkdir -p .boatrace-data
 
+      - name: Race date
+        # 2026-10-30: 夜の実行が日付をまたいで遅れても、その日のレースを答え合わせする（6時間前の日付）。朝の記事の「今夜の答え合わせ」と合わせる
+        run: echo "RACE_DATE=$(date -d '-6 hours' +%F)" >> "$GITHUB_ENV"
+
       - name: Fetch results
-        run: boatrace results fetch
+        run: boatrace results fetch "$RACE_DATE"
 
       - name: Check results
         run: boatrace results check
@@ -190,7 +196,7 @@ jobs:
 
   evening:
     if: >-
-      github.event.schedule == '30 12 * * *' ||
+      github.event.schedule == '47 12 * * *' ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'evening')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -218,8 +224,12 @@ jobs:
       - name: Ensure data directory
         run: mkdir -p .boatrace-data
 
+      - name: Race date
+        # 2026-10-30: 夜の実行が日付をまたいで遅れても、その日のレースを答え合わせする（6時間前の日付）。朝の記事の「今夜の答え合わせ」と合わせる
+        run: echo "RACE_DATE=$(date -d '-6 hours' +%F)" >> "$GITHUB_ENV"
+
       - name: Fetch results
-        run: boatrace results fetch
+        run: boatrace results fetch "$RACE_DATE"
 
       - name: Check results
         run: boatrace results check
@@ -236,7 +246,7 @@ jobs:
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
           NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
-        run: boatrace publish results
+        run: boatrace publish results "$RACE_DATE"
 
       - name: Cool-down before hit flash
         run: sleep $(shuf -i 60-180 -n 1)
@@ -247,7 +257,7 @@ jobs:
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
           NOTE_SESSION_COOKIES: ${{ secrets.NOTE_SESSION_COOKIES }}
-        run: boatrace publish hit-flash --min-payout 5000
+        run: boatrace publish hit-flash "$RACE_DATE" --min-payout 5000
         continue-on-error: true
 
       - name: Tweet hit announcements

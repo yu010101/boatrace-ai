@@ -102,6 +102,34 @@ async def month_ledger(upto: str) -> list[tuple[str, int, int]]:
     return rows
 
 
+PUBLISH_MARGIN = timedelta(minutes=15)
+
+
+def _picks_file(race_date: str) -> Path:
+    from boatrace_ai import config
+    return Path(config.DB_PATH).parent / "rin_picks" / f"{race_date}.json"
+
+
+def save_picks(race_date: str, top: list[dict]) -> None:
+    """朝に選んだ勝負レースを控える（DB と同じ場所＝Actions のキャッシュに載る）。夜はこれを読んで同じレースを答え合わせする"""
+    import json
+    f = _picks_file(race_date)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(top, ensure_ascii=False))
+
+
+def load_picks(race_date: str) -> list[dict] | None:
+    import json
+    f = _picks_file(race_date)
+    return json.loads(f.read_text()) if f.exists() else None
+
+
+def open_after():
+    """記事を出す時刻＋余裕。これより前に締め切るレースは勝負レースに選ばない"""
+    from datetime import datetime
+    return datetime.now(DL.JST) + PUBLISH_MARGIN
+
+
 def _late(race_date: str, close: dict) -> set:
     made = _made_at(race_date)
     return {k for k in made if not DL.before_deadline(made[k], close.get(k))}
@@ -141,7 +169,7 @@ async def build_grades(race_date: str, grades: list[dict], predictions: dict, ge
         late = _late(race_date, close)
         grades = [g for g in grades if (g["stadium_number"], g["race_number"]) not in late]
         excluded = {"races": len(late)}
-    top = A.picks(grades, predictions, close)
+    top = A.picks(grades, predictions, close, after=open_after() if race_date == date.today().isoformat() else None)
     dot = race_date.replace("-", ".")
     ledger = await month_ledger(yday)
     pngs = {
@@ -149,7 +177,7 @@ async def build_grades(race_date: str, grades: list[dict], predictions: dict, ge
         "picks": await V.render(V.picks_html(top, f"{dot} ／ %は本命が1着になる見込み。約束ではありません"), "picks") if top else None,
         "ledger": await V.render(V.ledger_html(ledger, f"〜{yday.replace('-', '.')} ／ 締切前に保存した予想だけ。本命＝1着になる見込みがいちばん高い艇"), "ledger") if ledger else None,
     }
-    return {"pngs": pngs, "make": lambda images: A.generate_rin_grades_article(race_date, grades, predictions, yesterday=yesterday, images=images, excluded=excluded, top=top)}
+    return {"pngs": pngs, "top": top, "make": lambda images: A.generate_rin_grades_article(race_date, grades, predictions, yesterday=yesterday, images=images, excluded=excluded, top=top)}
 
 
 async def build_results(race_date: str, records: list[dict], roi: dict, grades: list[dict]) -> dict:
@@ -157,7 +185,9 @@ async def build_results(race_date: str, records: list[dict], roi: dict, grades: 
     records, roi, excluded = await checked_results(race_date, records)
     close = await _closed(race_date)
     late = _late(race_date, close) if close is not None else set()
-    morning = A.picks([g for g in grades if (g["stadium_number"], g["race_number"]) not in late], _pred_map(race_date), close)
+    morning = load_picks(race_date)
+    if morning is None:
+        morning = A.picks([g for g in grades if (g["stadium_number"], g["race_number"]) not in late], _pred_map(race_date), close)
     ledger = await month_ledger(race_date)
     inv, pay = roi.get("total_invested", 0), roi.get("total_payout", 0)
     dot = race_date.replace("-", ".")

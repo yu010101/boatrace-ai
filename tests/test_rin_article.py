@@ -115,3 +115,34 @@ def test_venue_article_counts_and_no_promise():
     title, html, _ = generate_rin_venue_article(rows, "10/1〜10/28")
     assert "桐生（100%）" in title and "戸田（50%）" in title and "AI" not in title
     assert "約束するものではありません" in html and "全2場4レース" in html and "3,000円" in html
+
+
+def test_honmei_bets_keeps_only_bets_starting_with_honmei():
+    from boatrace_ai.publish.rin_article import honmei_bets
+    assert honmei_bets(["3連単 2-1-4"], 1) == []
+    assert honmei_bets(["単勝 1", "2連単 1-2", "3連単 2-1-4"], 1) == ["単勝 1", "2連単 1-2"]
+    assert honmei_bets(None, 1) == []
+
+
+def test_picks_skip_races_closed_before_publish():
+    from datetime import datetime, timedelta, timezone
+    from boatrace_ai.publish.rin_article import picks
+    jst = timezone(timedelta(hours=9))
+    now = datetime(2026, 10, 29, 11, 19, tzinfo=jst)
+    grades = [{"grade": "S", "stadium_number": 8, "race_number": 1, "top1_prob": 0.81},
+              {"grade": "S", "stadium_number": 8, "race_number": 6, "top1_prob": 0.78},
+              {"grade": "S", "stadium_number": 1, "race_number": 6, "top1_prob": 0.78}]
+    close = {(8, 1): now.replace(hour=10, minute=16), (8, 6): now.replace(hour=12, minute=40)}
+    got = picks(grades, {}, close, after=now)
+    assert [(p["st"], p["race"]) for p in got] == [(8, 6)]  # 締切済みの8-1と締切不明の1-6は選ばない
+    assert [(p["st"], p["race"]) for p in picks(grades, {}, close)] == [(8, 1), (1, 6)]  # after なしは従来どおり
+
+
+def test_saved_picks_roundtrip(tmp_path, monkeypatch):
+    from boatrace_ai import config
+    from boatrace_ai.publish import rin_publish as R
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "boatrace.db")
+    assert R.load_picks("2026-10-29") is None
+    top = [{"st": 8, "venue": "常滑", "race": 6, "order": [1, 2, 3], "pct": 78, "close": "12:40"}]
+    R.save_picks("2026-10-29", top)
+    assert R.load_picks("2026-10-29") == top

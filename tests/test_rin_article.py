@@ -21,7 +21,10 @@ def test_grade_hit_rows():
 
 def test_results_article_lists_all_and_no_old_brand():
     title, html, tags = generate_rin_results_article("2026-10-20", REC, ROI, GR)
-    assert "本命1/2的中" in title and "3連単1本ズバリ" in title and "AI" not in title
+    # 外れた日（差引マイナス）は差引を題名に出す（2026-10-30 強めの訴求）
+    assert title == "10/20の答え合わせ｜本命1/2、仮想購入は−700円。隠さず出します【競艇予想】" and "AI" not in title
+    assert "外れた日も、同じ形で全部出します" in html
+    assert "取り返" not in title + html
     assert "水理" not in html and "━━" not in html and "◆" not in html
     assert "差引−700円" in html
     assert "桐生 1R" in html  # 一致した3連単は全部載せる
@@ -158,3 +161,21 @@ def test_calib_lines_uses_actual_rate_and_breakeven():
     assert "300レース" in html and "180レース（60%）" in html and "1.7倍" in html
     assert calib_lines(85, calib) == []  # その帯の実績が無ければ書かない
     assert calib_lines(78, {**calib, "bands": {"70〜79%": (10, 20)}}) == []  # 少なすぎる帯も書かない
+
+
+def test_race_title_has_close_and_breakeven_when_calibrated():
+    from types import SimpleNamespace as NS
+    from boatrace_ai.publish.rin_article import generate_rin_race_article
+    boats = [NS(racer_boat_number=i, racer_name=f"選手{i}", racer_class_number=1, racer_average_start_timing=0.15,
+                racer_national_top_1_percent=6.0, racer_local_top_1_percent=6.0, racer_assigned_motor_top_2_percent=40.0,
+                racer_assigned_boat_top_2_percent=40.0) for i in range(1, 7)]
+    race = NS(race_stadium_number=8, race_number=6, race_date="2026-10-29", boats=boats)
+    pred = NS(predicted_order=[1, 2, 3, 4, 5, 6], recommended_bets=["単勝 1"])
+    calib = {"from": "2026-09-29", "to": "2026-10-28", "days": 30, "bands": {"70〜79%": (603, 832)}}
+    title, html, _ = generate_rin_race_article(race, pred, {"top1_prob": 0.78}, "12:40", True, calib=calib)
+    assert "締切12:40" in title and "買う線は単勝1.4倍超" in title
+    assert "過去832レースでは、本命1着は72%" in html
+    for bad in ("必ず", "勝てる", "稼げる", "鉄板", "投資", "取り返"):
+        assert bad not in title + html
+    title2, _, _ = generate_rin_race_article(race, pred, {"top1_prob": 0.78}, "12:40", True)
+    assert "買う線" not in title2  # 実績が無ければ線は出さない

@@ -151,9 +151,17 @@ def generate_rin_results_article(
     net = pay - inv
     venues = _venues([r["stadium_number"] for r in records])
 
-    title = f"{_date_short(race_date)}の答え合わせ｜本命{hit1}/{n}的中・3連単{len(tri)}本ズバリ【競艇予想】" if tri else f"{_date_short(race_date)}の答え合わせ｜本命{hit1}/{n}的中【競艇予想】"
+    # 2026-10-30 本人「強めの訴求で」: 外れた日も差引を題名に出して「隠さず出す」を読む理由にする（hard-copy 型集・りんは規則12の例外として本人判断。約束・取り返す誘いは書かない）
+    if inv and net < 0:
+        title = f"{_date_short(race_date)}の答え合わせ｜本命{hit1}/{n}、仮想購入は{_signed(net)}。隠さず出します【競艇予想】"
+    elif inv:
+        title = f"{_date_short(race_date)}の答え合わせ｜本命{hit1}/{n}・差引{_signed(net)}。外れも全部並べます【競艇予想】"
+    else:
+        title = f"{_date_short(race_date)}の答え合わせ｜本命{hit1}/{n}的中・3連単{len(tri)}本ズバリ【競艇予想】" if tri else f"{_date_short(race_date)}の答え合わせ｜本命{hit1}/{n}的中【競艇予想】"
 
     p: list[str] = []
+    if inv and net < 0:
+        p.append("<p>当たった日だけ出す予想は、信じにくいと思います。だから外れた日も、同じ形で全部出します。</p>")
     p.append(f"<p>{_date_jp(race_date)}、{'・'.join(venues[:3])}{'など' if len(venues) > 3 else ''}全{len(venues)}場{n}レースの答え合わせです。朝に出した1着予想と、実際の結果を並べます。</p>")
     lead = f"本命が1着だったのは{n}レース中{hit1}レース（{round(hit1 / n * 100) if n else 0}%）。"
     if inv:
@@ -242,13 +250,21 @@ def generate_rin_grades_article(
     made = sorted(g.get("created_at") or "" for g in grades)
     yl = yesterday_line(yesterday)
     head = "・".join(f"{t['venue']}{t['race']}R" for t in top[:2])
-    title = f"{_date_short(race_date)}【勝負レース{len(top)}選】{head}" + (f"｜{yl}" if yl else f"｜全{len(grades)}レースの本命つき") + "【競艇予想】"
+    first = min((t for t in top if t.get("close")), key=lambda t: t["close"], default=None)
+    if first:
+        # 2026-10-30 本人「強めの訴求で」: いちばん早い締切と「今夜ぜんぶ答え合わせ」で今読む理由を作る
+        title = f"{_date_short(race_date)}【勝負レース{len(top)}選】締切{first['close']}の{first['venue']}{first['race']}Rから｜今夜ぜんぶ答え合わせ【競艇予想】"
+    else:
+        title = f"{_date_short(race_date)}【勝負レース{len(top)}選】{head}" + (f"｜{yl}" if yl else f"｜全{len(grades)}レースの本命つき") + "【競艇予想】"
 
     p: list[str] = []
     if top:
         names = "・".join(f"{t['venue']}{t['race']}R" for t in top)
-        p.append(f"<p><strong>今日の勝負レースは{names}！</strong>全{len(venues)}場{len(grades)}レースの中から、本命が1着になる見込みがいちばん高いレースを選びました。</p>")
-    p.append("<p>りん「今日の勝負レースはこの3つ！ 夜に、当たりも外れも答え合わせするからね。」</p>" if len(top) >= 3 else "<p>りん「今日の勝負レースはこれ！ 夜に、当たりも外れも答え合わせするからね。」</p>")
+        p.append(f"<p><strong>今日の勝負レースは{names}！</strong>{'いちばん早い締切は' + first['close'] + 'です。' if first else ''}全{len(venues)}場{len(grades)}レースの中から、本命が1着になる見込みがいちばん高いレースを選びました。</p>")
+        cs = calib_stat(top[0]["pct"], calib)
+        if cs:
+            p.append(f"<p>見込み{cs[0]}と出したレースは、これまでに{cs[2]}レース。本命が1着だったのは{round(cs[1] / cs[2] * 100)}%でした。</p>")
+    p.append("<p>りん「今日の勝負レースはこの3つ！ 当たりも外れも、今夜アタシが全部出すからね。」</p>" if len(top) >= 3 else "<p>りん「今日の勝負レースはこれ！ 当たりも外れも、今夜アタシが全部出すからね。」</p>")
 
     if top:
         p.append(f"<h2>今日の勝負レース{len(top)}選</h2>")
@@ -341,6 +357,15 @@ def breakeven_odds(hit: int, n: int) -> float | None:
     return math.ceil(n / hit * 10) / 10
 
 
+def calib_stat(pct: int, calib: dict | None) -> tuple[str, int, int, float | None] | None:
+    """この見込みの帯の (帯, 本命1着数, レース数, 単勝の損益分岐)。実績が少なければ None"""
+    if not calib:
+        return None
+    label = calib_band(pct)
+    hit, n = calib["bands"].get(label, (0, 0))
+    return (label, hit, n, breakeven_odds(hit, n)) if n >= CALIB_MIN_N else None
+
+
 def calib_lines(pct: int, calib: dict | None) -> list[str]:
     """calib: {"from","to","days","bands":{label:(hit,n)}}。この見込みの帯の実績と、単勝の損益分岐を本文の段落で返す"""
     if not calib:
@@ -371,12 +396,21 @@ def generate_rin_race_article(race, prediction, grade: dict, close: str = "", fr
     pct = round(grade["top1_prob"] * 100)
     boat_of = {b.racer_boat_number: b for b in race.boats}
     name = lambda n: boat_of[n].racer_name if n in boat_of else "?"  # noqa: E731
-    title = f"{_date_short(race.race_date)} {venue}{race.race_number}R【勝負レース】本命{order[0]}号艇・見込み{pct}%｜全6艇のデータつき【競艇予想】"
+    cs = calib_stat(pct, calib)
+    if cs and cs[3] and close:
+        # 2026-10-30 本人「強めの訴求で」: 締切と「買う線」（過去の割合からの損益分岐）を題名に出す。約束はしない（本文に過去の割合と書く）
+        title = f"{_date_short(race.race_date)} {venue}{race.race_number}R 締切{close}｜本命{order[0]}号艇・見込み{pct}%。買う線は単勝{cs[3]:.1f}倍超【競艇予想】"
+    else:
+        title = f"{_date_short(race.race_date)} {venue}{race.race_number}R【勝負レース】本命{order[0]}号艇・見込み{pct}%｜全6艇のデータつき【競艇予想】"
 
     p: list[str] = []
-    p.append(f"<p><strong>{venue} {race.race_number}Rの本命は{order[0]}号艇（{name(order[0])}）。1着になる見込みは{pct}%です。</strong>"
+    p.append(f"<p><strong>{venue} {race.race_number}R{'（締切 ' + close + '）' if close else ''}の本命は{order[0]}号艇（{name(order[0])}）。1着になる見込みは{pct}%です。</strong>"
              f"推奨度Sのレースから、見込みの高い順に選んだ1つです。</p>")
-    p.append("<p>りん「このレース、アタシは本命を信じてる！ でも外れることもあるから、夜の答え合わせも見てね。」</p>")
+    if cs and cs[3]:
+        p.append(f"<p>同じ見込みの帯で出した過去{cs[2]}レースでは、本命1着は{round(cs[1] / cs[2] * 100)}%。この割合どおりなら、単勝が{cs[3]:.1f}倍より高いときだけ続けて買う計算です。</p>")
+        p.append("<p>りん「低ければ見送り。それも答えだよ！ 夜の答え合わせで結果も出すね。」</p>")
+    else:
+        p.append("<p>りん「このレース、アタシは本命を信じてる！ でも外れることもあるから、夜の答え合わせも見てね。」</p>")
     p.append("<h2>りんの予想</h2>")
     marks = " ".join(f"{m}{b}" for m, b in zip(["◎", "○", "△"], order[:3]))
     p.append("<ul>"
